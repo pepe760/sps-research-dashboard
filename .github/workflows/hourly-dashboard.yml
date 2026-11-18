@@ -48,7 +48,7 @@ jobs:
       - name: Stage the public website allowlist
         run: |
           mkdir -p public-output/data
-          cp site/{index.html,styles.css,terminal.js,yahoo-vix.js,trade-desk.css,trade-desk.js,.nojekyll} public-output/
+          cp site/{index.html,styles.css,terminal.js,yahoo-vix.js,xsp-session.js,xsp-chain-core.js,xsp-cboe-paste.js,xsp-scan.js,trade-desk.css,trade-desk.js,.nojekyll} public-output/
           cp site/data/status.json public-output/data/
       - uses: actions/upload-pages-artifact@v3
         with:

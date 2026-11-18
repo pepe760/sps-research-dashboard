@@ -6,11 +6,15 @@
   <meta name="color-scheme" content="light">
   <meta name="description" content="XSP short put spread 核對台：最新指數、下一交易日合約、兩腿實盤報價、權利金同最大到期風險。">
   <title>XSP SPS · 開倉核對台</title>
-  <link rel="stylesheet" href="./styles.css?v=yahoo-1">
+  <link rel="stylesheet" href="./styles.css?v=xsp-scan-1">
   <link rel="stylesheet" href="./trade-desk.css">
-  <script src="./terminal.js?v=yahoo-1" defer></script>
+  <script src="./terminal.js?v=xsp-scan-1" defer></script>
   <script src="./yahoo-vix.js?v=yahoo-1" defer></script>
   <script src="./trade-desk.js" defer></script>
+  <script src="./xsp-session.js?v=1" defer></script>
+  <script src="./xsp-chain-core.js?v=1" defer></script>
+  <script src="./xsp-cboe-paste.js?v=1" defer></script>
+  <script src="./xsp-scan.js?v=1" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">跳至主要內容</a>
@@ -73,8 +77,28 @@
       <div class="strategy-tags" aria-label="候選合約規格"><span>下一交易日到期</span><span>短 put 約 −0.10Δ</span><span>W15 · 15 點</span></div>
       <div id="candidates-content" class="candidate-content" aria-live="polite"><p class="empty-block">核對兩腿之後，呢度會顯示行使價、Bid／Ask、報價時間、參考淨收金同最大到期虧損。</p></div>
       <p id="decision-note" class="decision-note" role="status">缺到期日、delta、兩腿盤口或報價時間，就唔會列為可核對候選。</p>
+      <section class="chain-scan anchor-section" id="xsp-scan" aria-labelledby="xsp-scan-title">
+        <div class="chain-scan-heading"><h3 id="xsp-scan-title">貼期權鏈，自動揀兩腿</h3><span class="pill neutral-pill">XSP · 1DTE · W15</span></div>
+        <p id="xsp-scan-expiry" class="scan-expiry" aria-live="polite">核對美國交易日…</p>
+        <p class="micro-note">喺券商揀上面嗰個到期日嘅 XSP puts，將 strike、delta、bid 同 ask 貼入。亦可手動複製 <a href="https://www.cboe.com/data/quotes/xsp/options" target="_blank" rel="noopener noreferrer">Cboe XSP 延遲 puts ↗</a> 做參考。</p>
+        <form id="xsp-scan-form">
+          <div class="chain-scan-inputs">
+            <label>資料來源
+              <select name="source"><option value="broker">券商報價（手動匯入）</option><option value="cboe">Cboe 網頁（延遲）</option></select>
+            </label>
+            <label>所選期權到期日（美國日期）<input type="date" name="expiry" required></label>
+            <label class="scan-file">或讀 CSV 檔 <input type="file" id="xsp-scan-file" accept=".csv,.tsv,.txt,text/csv,text/plain"></label>
+          </div>
+          <label for="xsp-scan-input">貼 XSP put 期權鏈</label>
+          <textarea id="xsp-scan-input" name="chain" rows="4" maxlength="250000" spellcheck="false" required placeholder="CSV 表頭：expiry,strike,delta,bid,ask&#10;或貼 Cboe Puts (EXPR: …) 連表頭同報價"></textarea>
+          <label class="scan-confirm"><input type="checkbox" name="confirmed" required> 我已核對係原生 XSP put，同埋所選嘅到期日。</label>
+          <div class="quote-actions"><button class="primary-button" type="submit">篩選 −0.10Δ／W15</button><button class="secondary-button" type="button" id="xsp-scan-clear">清除已貼資料</button></div>
+        </form>
+        <div id="xsp-scan-result" class="candidate-content scan-result" aria-live="polite"></div>
+        <p class="micro-note">只在本頁計算，冇上傳。結果係你貼入嗰份快照嘅配對，唔會當即時報價，亦唔代表已通過 SMA200、事件或 09:45 ET 選腿規則。</p>
+      </section>
       <div class="quote-actions">
-        <a class="primary-button" href="#manual-details">用券商報價手動核對 ↓</a>
+        <a class="quiet-link" href="#manual-details">已有兩腿？手動計風險 ↓</a>
         <a class="quiet-link" href="https://uk.finance.yahoo.com/quote/%5EXSP/options/" rel="noopener noreferrer" target="_blank">Yahoo ^XSP 期權頁（延遲） ↗</a>
       </div>
       <p class="micro-note">參考淨收金 = Short bid − Long ask。呢套篩選用 09:45 ET 記錄選腿，由 10:45 ET 起核對盤口。Yahoo 如冇顯示 put 或 delta，喺券商再查。落單前核對兩腿組合限價、費用同可用購買力。</p>

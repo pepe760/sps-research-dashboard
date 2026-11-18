@@ -127,7 +127,7 @@
     if(key===state.lastCandidateKey) return;
     state.lastCandidateKey=key;
     const missing = reasons.includes("options_unconfigured") || reasons.includes("market_unconfigured");
-    badge(ui.candidate,ready ? "盤口可核對" : c ? "只供參考" : missing ? "即時來源未接駁" : "未有可核對組合",ready?"good":c?"warning":"neutral");
+    badge(ui.candidate,ready ? "盤口可核對" : c ? "只供參考" : missing ? "可貼期權鏈篩選" : "未有可核對組合",ready?"good":c?"warning":"neutral");
     const list = reasons.map(k=>labels.get(k)).filter(Boolean);
     const summary=c ? (ready ? "研究條件同報價時間已核對。落單前仍要喺券商再核對即時兩腿限價。" : "以下報價只作參考，未通過即時核對。")
       : missing ? "公開即時行情未接齊，今日未能自動核對合約。" : "暫時未能確認符合研究規格嘅即時組合。";
@@ -136,7 +136,7 @@
     ui.gates.replaceChildren(...list.map(t=>el("li",t)));
     if(!c) {
       const empty=el("div",undefined,"empty-block");
-      empty.append(el("strong",missing?"未能自動列出實際行使價":"未取得可用兩腿"),el("p","請用券商 XSP 期權鏈揀下一個實際交易日到期，並抄低兩腿 bid／ask 同 short put delta。"));
+      empty.append(el("strong",missing?"未有自動更新盤口":"未取得可用兩腿"),el("p","可以將下一交易日到期嘅 XSP puts 貼入下面，由頁面按 delta、闊度同盤口配對。"));
       ui.result.replaceChildren(empty);return;
     }
     const meta=el("p", "同一到期："+c.expiry+" · W15 · "+(source||"合約報價來源未命名"),"micro-note");
