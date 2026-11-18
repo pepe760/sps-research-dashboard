@@ -6,7 +6,7 @@
     market:$("market-metrics"), refs:$("market-references"), feed:$("feed-status"), stamp:$("feed-updated"),
     refresh:$("feed-refresh"), result:$("candidates-content"), candidate:$("candidate-status"),
     decision:$("decision-note"), gates:$("gate-list"), events:$("events-list"),
-    chart:$("vix-chart"), period:$("vix-period"), chartNote:$("vix-chart-note"), manual:$("manual-details")
+    chart:$("vix-chart"), period:$("vix-period"), chartNote:$("vix-chart-note"), expiry:$("xsp-auto-expiry")
   };
   const STATIC = "./data/status.json";
   const LIVE_TTL = 90 * 1000;
@@ -14,23 +14,11 @@
   const YAHOO_VIX = "https://finance.yahoo.com/chart/%5EVIX/";
   const YAHOO_XSP = "https://finance.yahoo.com/quote/%5EXSP/";
   const YAHOO_SPX = "https://finance.yahoo.com/quote/%5EGSPC/";
-  const MANUAL_KEY = "sps.yahoo.reference.v1";
   const MARKET = [["XSP","Mini-SPX 指數"],["VIX","Cboe 波幅指數"],["SPX","S&P 500 參考指數"]];
   const HKT = new Intl.DateTimeFormat("en-GB", {timeZone:"Asia/Hong_Kong",month:"short",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"});
   const POINTS = new Intl.NumberFormat("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   const USD = new Intl.NumberFormat("en-US",{style:"currency",currency:"USD"});
   const state = {current:null,lastStatic:null,endpoint:null,route:"none",loading:false,sourceError:false,lastMarketKey:"",lastVixKey:"",lastCandidateKey:""};
-  const manualQuote=Object.create(null);
-  let yahooHistory=null;
-  try {
-    const saved=JSON.parse(localStorage.getItem(MANUAL_KEY)||"{}");
-    for(const [ticker] of MARKET) {
-      const x=saved?.[ticker];
-      if(x && Number.isFinite(x.spot) && x.spot>0 && typeof x.as_of==="string" && Number.isFinite(Date.parse(x.as_of))) {
-        manualQuote[ticker]={spot:x.spot,as_of:x.as_of};
-      }
-    }
-  } catch {}
   const labels = new Map([
     ["market_unconfigured","未設定公開指數行情"],
     ["options_unconfigured","未設定公開 XSP 期權盤口"],
@@ -53,6 +41,14 @@
     ["client_stale","報價已超過 90 秒，請以券商當刻盤口再核對"],
     ["live_transport_unavailable","即時接駁未開通；公開快照按排程產生"],
     ["source_unreachable","即時資料暫時讀唔到，以下只供參考"]
+  ]);
+  const AUTO_MESSAGE = new Map([
+    ["no_regular_session","呢日冇正常美股交易時段，系統會等下一個交易日。"],
+    ["outside_capture_or_pricing_window","未到盤口核對時間，或今日交易已結束。"],
+    ["selection_saved","09:45 ET 選腿已記錄；10:45 ET 起更新同一組盤口。"],
+    ["selection_not_available","正在等 09:45 ET 嘅有效期權報價。"],
+    ["no_0945_selection","今日未能喺 09:45 ET 記錄合資格嘅兩腿，唔會用後來報價補選。"],
+    ["missing_fresh_matching_legs","已鎖定兩腿，暫未取得同時段嘅有效 bid／ask。"]
   ]);
   function el(tag, value, cls) {
     const n = document.createElement(tag);
@@ -82,14 +78,10 @@
 
   function marketRows(d) {
     const rows = MARKET.map(([symbol,name])=>{
-      const source=d?.desk?.market?.[symbol] || {};
-      const sourceLive=source.status==="live" && num(source.spot) && source.spot>0 && recent(source.as_of);
-      const manual=manualQuote[symbol];
-      const useManual=Boolean(!sourceLive && manual && (!num(stamp(source.as_of)) || stamp(manual.as_of)>=stamp(source.as_of)));
-      const q=useManual ? {...manual,source:"Yahoo Finance · 手動記錄"} : source;
+      const q=d?.desk?.market?.[symbol] || {};
       const hasPrice=num(q.spot) && q.spot>0 && num(stamp(q.as_of));
-      const live=!useManual && sourceLive;
-      const text=useManual ? "手動參考 · 非即時核實" : live ? "即時來源" : hasPrice && (q.feed_mode==="delayed" || q.status==="delayed") ? "延遲參考" : hasPrice ? "舊／未證實即時" : "未有報價";
+      const live=q.status==="live" && hasPrice && recent(q.as_of);
+      const text=live ? "即時來源" : hasPrice && (q.feed_mode==="delayed" || q.status==="delayed") ? "延遲參考" : hasPrice ? "舊／未證實即時" : "未有報價";
       return [symbol,name,q,hasPrice,live,text];
     });
     const key=JSON.stringify(rows);
@@ -119,24 +111,24 @@
       && recent(d?.checked_at) && recent(d?.desk?.market?.XSP?.as_of) && recent(d?.desk?.market?.SPX?.as_of);
     if(s?.status==="ready" && !ready) reasons.push("client_stale");
     if(state.sourceError && state.endpoint) { reasons.push("source_unreachable"); ready=false; }
-    return {c,ready,reasons:Array.from(new Set(reasons)),source:s?.source};
+    return {c,ready,reasons:Array.from(new Set(reasons)),source:s?.source,collectorState:s?.collector_state};
   }
 
-  function setupPanel({c,ready,reasons,source}) {
-    const key=JSON.stringify([c,ready,reasons,source]);
+  function setupPanel({c,ready,reasons,source,collectorState}) {
+    const key=JSON.stringify([c,ready,reasons,source,collectorState]);
     if(key===state.lastCandidateKey) return;
     state.lastCandidateKey=key;
     const missing = reasons.includes("options_unconfigured") || reasons.includes("market_unconfigured");
-    badge(ui.candidate,ready ? "盤口可核對" : c ? "只供參考" : missing ? "可貼期權鏈篩選" : "未有可核對組合",ready?"good":c?"warning":"neutral");
+    badge(ui.candidate,ready ? "盤口可核對" : c ? "只供參考" : missing ? "等待自動行情接駁" : "未有可核對組合",ready?"good":c?"warning":"neutral");
     const list = reasons.map(k=>labels.get(k)).filter(Boolean);
     const summary=c ? (ready ? "研究條件同報價時間已核對。落單前仍要喺券商再核對即時兩腿限價。" : "以下報價只作參考，未通過即時核對。")
-      : missing ? "公開即時行情未接齊，今日未能自動核對合約。" : "暫時未能確認符合研究規格嘅即時組合。";
+      : missing ? "公開即時行情服務尚未設定，暫未能取數。" : (AUTO_MESSAGE.get(collectorState)||"暫時未能確認符合研究規格嘅即時組合。");
     ui.decision.textContent=summary;
     ui.decision.dataset.tone=ready?"good":"warn";
     ui.gates.replaceChildren(...list.map(t=>el("li",t)));
     if(!c) {
       const empty=el("div",undefined,"empty-block");
-      empty.append(el("strong",missing?"未有自動更新盤口":"未取得可用兩腿"),el("p","可以將下一交易日到期嘅 XSP puts 貼入下面，由頁面按 delta、闊度同盤口配對。"));
+      empty.append(el("strong",missing?"自動盤口未接通":"未取得可用兩腿"),el("p",missing?"系統接通行情後會自動揀兩腿，開頁唔需要輸入資料。":"系統暫時未取得符合 1DTE、delta、W15 同報價要求嘅配對。"));
       ui.result.replaceChildren(empty);return;
     }
     const meta=el("p", "同一到期："+c.expiry+" · W15 · "+(source||"合約報價來源未命名"),"micro-note");
@@ -182,7 +174,7 @@
     return e;
   }
   function renderVix(d) {
-    const hist=yahooHistory?.series?.length>=2 ? yahooHistory : d?.desk?.vix_history;
+    const hist=d?.desk?.vix_history;
     const rows=(Array.isArray(hist?.series)? hist.series:[]).filter(r=>validDay(r?.date)&&num(r.close)&&r.close>0).slice(-70);
     const key=JSON.stringify([hist?.status,hist?.source,rows]);
     if(key===state.lastVixKey) return;
@@ -218,6 +210,9 @@
   }
 
   function render() {
+    const session=window.SpsXspSession?.next();
+    const target=session?.known ? (session.isPlanned?"下一個正常交易時段":"今個正常交易時段")+"（美東 "+session.entryDate+"）→ 1DTE："+session.expiry+" 到期" : "未能核對下一個交易日。";
+    if(ui.expiry.textContent!==target)ui.expiry.textContent=target;
     const d=state.current;
     const marketLive=marketRows(d);
     const setup=setupFor(d);
@@ -228,7 +223,7 @@
     else if(marketLive) badge(ui.feed,"指數已有即時值；期權待核對","warning");
     else badge(ui.feed,hasConfigured?"未取得可核對即時數據":"即時行情未接駁","neutral");
     ui.stamp.textContent=(num(stamp(d?.checked_at))?"網站查詢："+asHkt(d.checked_at):"尚未取得網站查詢時間")
-      +(state.route==="live"?" · 即時來源":" · 網站排程資料");
+      +(state.route==="live"?" · 15 秒自動查詢":" · 網站排程資料");
   }
 
   function publicEndpoint(v) {
@@ -274,35 +269,6 @@
   }
 
   ui.refs.replaceChildren(link("Yahoo ^VIX 最新／3M ↗",YAHOO_VIX),link("Yahoo ^XSP 現值 ↗",YAHOO_XSP),link("Yahoo ^GSPC（SPX）↗",YAHOO_SPX));
-  const spotForm=$("yahoo-spot-form");
-  const feedback=$("yahoo-spot-result");
-  function saveManual() {
-    try {localStorage.setItem(MANUAL_KEY,JSON.stringify(manualQuote));}
-    catch {return false;}
-    return true;
-  }
-  spotForm.addEventListener("submit",e=>{
-    e.preventDefault();
-    const f=new FormData(spotForm);
-    const symbol=f.get("symbol"), spot=Number(f.get("spot")), local=f.get("time");
-    const asOf=typeof local==="string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(local) ? Date.parse(local+"+08:00") : NaN;
-    if(!MARKET.some(r=>r[0]===symbol)||!num(spot)||spot<=0||spot>100000||!num(asOf)||asOf>Date.now()+30000) {
-      feedback.textContent="請核對有效指數值同原報價嘅香港時間；時間唔可以係將來。";return;
-    }
-    manualQuote[symbol]={spot,as_of:new Date(asOf).toISOString()};
-    feedback.textContent=saveManual()?"已記低 "+symbol+" 嘅手動參考值。":"已暫存，重新載入就會清除。";
-    render();
-  });
-  $("yahoo-spot-clear").addEventListener("click",()=>{
-    const symbol=new FormData(spotForm).get("symbol");
-    delete manualQuote[symbol];saveManual();feedback.textContent="已清除 "+symbol+" 嘅手動值。";render();
-  });
-  window.addEventListener("sps:yahoo-vix-history",e=>{
-    yahooHistory=e.detail||null;renderVix(state.current);
-  });
-  document.querySelectorAll("a[href='#manual-details']").forEach(a=>a.addEventListener("click",()=>{ui.manual.open=true;}));
-  const openManual=()=>{if(["#manual-details","#strike-desk"].includes(location.hash)) ui.manual.open=true;};
-  window.addEventListener("hashchange",openManual);openManual();
   ui.refresh.addEventListener("click",()=>refresh(true));
   refresh(true);
   setInterval(()=>{if(!document.hidden){render();if(state.endpoint) refresh();}},15000);

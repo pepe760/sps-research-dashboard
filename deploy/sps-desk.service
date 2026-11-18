@@ -1,0 +1,36 @@
+[Unit]
+Description=SPS Desk automatic Massive XSP collector and public read-only API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/sps-research-dashboard
+DynamicUser=yes
+User=sps-desk
+StateDirectory=sps-desk
+StateDirectoryMode=0700
+UMask=0077
+EnvironmentFile=/etc/sps-desk/provider.env
+LoadCredential=massive-api-key:/etc/sps-desk/massive-api-key
+ExecStart=/usr/bin/python3 -B -u /opt/sps-research-dashboard/deploy/run_desk.py --provider massive --port 8788 --poll-seconds 10
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

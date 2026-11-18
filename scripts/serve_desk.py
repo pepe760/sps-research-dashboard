@@ -205,12 +205,18 @@ class DeskHandler(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--provider", choices=("adapters","massive"), default="adapters",
+                        help="normalized operator adapters or automatic Massive Business collector")
     parser.add_argument("--port", type=int, default=8788)
     parser.add_argument("--poll-seconds", type=int, choices=range(5, 31), default=12)
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be in 1..65535")
-    state = DeskState(args.poll_seconds)
+    loader = environment_lanes
+    if args.provider == "massive":
+        from xsp_auto import lanes as automatic_lanes
+        loader = automatic_lanes
+    state = DeskState(args.poll_seconds, lane_loader=loader)
     with DeskServer((BIND, args.port), state) as server:
         state.start()
         print(f"SPS desk listening on http://{BIND}:{args.port}{PATH}", flush=True)

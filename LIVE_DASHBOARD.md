@@ -2,7 +2,17 @@
 
 GitHub Pages serves the desk. A separate, operator-hosted read-only service serves the data at `/desk.json`. The Pages build can also publish a fallback status snapshot. A Pages rebuild is not the live data path.
 
-## 1. Prepare the data feeds
+## Automatic Massive Business collector
+
+Use the [always-on service template](deploy/README.md) with a Massive Business key and the relevant public display and real-time quote/index entitlements. In this mode there is no separate hand-built market/options adapter and no visitor upload. The host fetches the vendor data itself, records the XSP selection in its persistent private state during the 09:45 ET minute and publishes the same pair's validated quote from 10:45 ET during regular trading. The browser refreshes the service every 15 seconds while open. The live market data is not packaged with this repository.
+
+```sh
+python3 scripts/serve_desk.py --provider massive --port 8788 --poll-seconds 10
+```
+
+The following steps are for the existing separately normalized feed mode or the common publication configuration.
+
+## 1. Prepare the data feeds (custom adapters only)
 
 Use provider adapters whose contracts allow this site to publicly display the selected quotes and VIX history. See [vendor and verification notes](RELEASE_PUB_LIVE.md) and [adapter format](FEED_SCHEMA.md).
 
@@ -43,7 +53,7 @@ desk.example.net {
 
 Preserve the service's `Cache-Control: no-store`; do not add CDN caching or wildcard CORS. The browser origin is fixed at `https://pepe760.github.io`, with no cross-origin credentials. The route is public and read-only; the CORS policy does not make data confidential.
 
-The service polls the providers independently of browser traffic, with one refresh in progress and 12 seconds between completed refreshes by default. A cache older than one minute is not used for the quote lanes. Actual quote freshness uses provider/exchange timestamps, never the server's refresh time. Official event calendars refresh every 30 minutes and become unavailable if their cache expires. A current calendar fetch still does not establish coverage for every trade date.
+The service polls the provider independently of browser traffic, with one refresh in progress and 12 seconds between completed refreshes by default (10 in the auto-deployment example). A cache older than one minute is not used for the quote lanes. Actual quote freshness uses provider/exchange timestamps, never the server's refresh time. Official event calendars refresh every 30 minutes and become unavailable if their cache expires. A current calendar fetch still does not establish coverage for every trade date.
 
 ## 3. Connect GitHub Pages
 

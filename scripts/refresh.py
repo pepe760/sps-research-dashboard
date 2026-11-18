@@ -530,6 +530,13 @@ def snapshot(now, events, feed=None, *, configured=False, previous=None, source=
     desk_market={s:desk_observation(object_or_empty(instruments.get(s)),market_lane["status"],market_source,now)
                  for s in DESK_SYMBOLS}
     setup=desk_option_status(now,market_lane["status"],options_lane["status"],xsp_proposal,xsp_raw,xsp_candidate,desk_market,option_source)
+    # Translate only our own fixed collector codes; no vendor errors, keys or paths.
+    collector_state=options_lane.get("reason")
+    if isinstance(collector_state,str) and collector_state in (
+        "no_regular_session", "outside_capture_or_pricing_window", "selection_saved",
+        "selection_not_available", "no_0945_selection", "missing_fresh_matching_legs"
+    ):
+        setup["collector_state"]=collector_state
     return {"schema_version":1,"checked_at":iso(now),
             "sources":{name:{"status":lane["status"],"label":stated_source(lane)} for name,lane in lanes.items()},
             "market":{"status":m_status,"as_of":max((r["as_of"] for r in market.values()),default=None),

@@ -4,3 +4,7 @@ __pycache__/
 .env.*
 !*.example
 public-output/
+
+*.sqlite*
+*.db-wal
+*.db-shm
