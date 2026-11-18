@@ -40,13 +40,15 @@ jobs:
           SPS_PUBLIC_OPTIONS_LABEL: ${{ vars.SPS_PUBLIC_OPTIONS_LABEL }}
           SPS_PUBLIC_OPTIONS_URL: ${{ secrets.SPS_PUBLIC_OPTIONS_URL }}
           SPS_PUBLIC_OPTIONS_TOKEN: ${{ secrets.SPS_PUBLIC_OPTIONS_TOKEN }}
+          SPS_PUBLIC_LIVE_DESK_APPROVED: ${{ vars.SPS_PUBLIC_LIVE_DESK_APPROVED }}
+          SPS_PUBLIC_LIVE_DESK_URL: ${{ vars.SPS_PUBLIC_LIVE_DESK_URL }}
         run: |
           python -m unittest discover -s scripts/tests
           python scripts/refresh.py
       - name: Stage the public website allowlist
         run: |
           mkdir -p public-output/data
-          cp site/{index.html,styles.css,app.js,trade-desk.css,trade-desk.js,.nojekyll} public-output/
+          cp site/{index.html,styles.css,terminal.js,trade-desk.css,trade-desk.js,.nojekyll} public-output/
           cp site/data/status.json public-output/data/
       - uses: actions/upload-pages-artifact@v3
         with:

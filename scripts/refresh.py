@@ -1,5 +1,6 @@
 """Build the public, allowlisted dashboard snapshot. No brokerage access."""
 from datetime import date, datetime, timedelta, timezone
+from calendar import monthrange
 from math import fsum, isfinite
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -12,12 +13,14 @@ import re
 import tempfile
 
 from events import fetch_events
-from watchlist import snapshot as watchlist_snapshot
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parents[1]
 SYMBOLS = ("SPY", "XSP", "SPX", "VIX")
 CHART_SYMBOLS = ("SPX", "VIX")
+DESK_SYMBOLS = ("XSP", "SPX", "VIX")
+DESK_LIVE_MAX_SECONDS = 90
+DESK_QUOTE_SKEW_SECONDS = 15
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -72,6 +75,45 @@ def instrument(item, now):
     return out
 
 
+def quote_mode(raw):
+    """Never infer a real-time entitlement from a timestamp or vendor label."""
+    key=str(raw or "").strip().lower().replace("-", "_")
+    if key in ("real_time", "realtime"):
+        return "real_time"
+    if key in ("delayed", "frozen", "delayed_frozen", "end_of_day"):
+        return key
+    return "unspecified"
+
+
+def source_timestamp_basis(raw):
+    return raw if raw in ("exchange", "provider_event") else None
+
+
+def desk_observation(item, lane_status, source, now):
+    out={"status":"unconfigured" if lane_status=="unconfigured" else "unavailable",
+         "spot":None,"as_of":None,"source":None,"feed_mode":"unspecified",
+         "timestamp_basis":None,"age_seconds":None}
+    if lane_status!="connected" or not number(item.get("spot")):
+        return out
+    try:
+        t=timestamp(item.get("as_of"))
+    except (TypeError,ValueError,OverflowError):
+        return out
+    age=(now-t).total_seconds()
+    if not 0<=age<=7*86400:
+        return out
+    mode=quote_mode(item.get("feed_mode"))
+    basis=source_timestamp_basis(item.get("timestamp_basis"))
+    if mode=="real_time" and basis:
+        status="live" if age<=DESK_LIVE_MAX_SECONDS else "stale"
+    elif mode in ("delayed", "frozen", "delayed_frozen", "end_of_day"):
+        status=mode
+    else:
+        status="unspecified"
+    return {"status":status,"spot":item["spot"],"as_of":iso(t),"source":source,
+            "feed_mode":mode,"timestamp_basis":basis,"age_seconds":int(age)}
+
+
 def chart_series(item, now):
     """Compute session-based averages before trimming the public viewing range."""
     try:
@@ -95,7 +137,7 @@ def chart_series(item, now):
         if d>et.date() or d in prices or d.weekday()>4:
             return None
         # Never use an unfinished US regular-session bar as a historical close.
-        if d==et.date() and (et.strftime("%H:%M")<"16:15" or r.get("complete") is not True):
+        if r.get("complete") is False or (d==et.date() and (et.strftime("%H:%M")<"16:15" or r.get("complete") is not True)):
             continue
         prices[d]=r["close"]
     days=sorted(prices)
@@ -122,6 +164,7 @@ def chart_snapshot(feed, now, approved, source):
             "source":str(source)[:80] if source and rows else None,
             "as_of":min((v["as_of"] for v in rows.values()),default=None),
             "series":{s:v["series"] for s,v in rows.items()},
+            "status_by_symbol":{s:"stale" if v["stale"] else "available" for s,v in rows.items()},
             "last_close_dates":{s:v["last_close_date"] for s,v in rows.items()}}
 
 
@@ -214,12 +257,116 @@ def select_chain(symbol,i):
             "short_bid":quoted[short][0],"short_ask":quoted[short][1],"long_bid":quoted[long][0],"long_ask":quoted[long][1]}
 
 
+def desk_leg_times(proposal):
+    if isinstance(proposal.get("quote_puts"),list):
+        rows=proposal["quote_puts"]
+        times=[]
+        for name in ("short_strike", "long_strike"):
+            matched=[r.get("as_of") for r in rows if isinstance(r,dict) and r.get("type")=="put"
+                     and r.get("expiry")==proposal.get("expiry") and r.get("strike")==proposal.get(name)]
+            times.append(matched[0] if len(matched)==1 else None)
+    else:
+        times=[proposal.get(name) for name in ("short_quote_as_of","long_quote_as_of")]
+    try:
+        return [timestamp(v) for v in times]
+    except (TypeError,ValueError,OverflowError):
+        return []
+
+
+def desk_option_status(now, market_lane, option_lane, proposal, raw, setup_candidate, cash, source):
+    blockers=[]
+    if option_lane!="connected":
+        blockers.append("options_unconfigured" if option_lane=="unconfigured" else "options_unavailable")
+    if market_lane!="connected":
+        blockers.append("market_unconfigured" if market_lane=="unconfigured" else "market_unavailable")
+    if cash["XSP"]["status"]!="live":
+        blockers.append("xsp_not_live")
+    if cash["SPX"]["status"]!="live":
+        blockers.append("spx_not_live")
+    et=now.astimezone(ET)
+    # The builder checks ET windows, while the feed independently verifies the actual next session.
+    if et.weekday()>4 or not "10:45"<=et.strftime("%H:%M")<"16:00":
+        blockers.append("outside_entry_window")
+    safe=None
+    if option_lane=="connected":
+        if not raw:
+            blockers.append("no_candidate")
+        elif raw.get("verified_next_session") is not True:
+            blockers.append("calendar_unverified")
+        elif not setup_candidate:
+            blockers.append("no_candidate")
+        else:
+            raw_mode=quote_mode(proposal.get("feed_mode"))
+            stamp_basis=source_timestamp_basis(proposal.get("timestamp_basis"))
+            if raw_mode!="real_time" or not stamp_basis:
+                blockers.append("options_not_live")
+            if stamp_basis and raw_mode!="unspecified":
+                stamp=timestamp(setup_candidate["as_of"])
+                age=(now-stamp).total_seconds()
+                legs=desk_leg_times(proposal)
+                if (len(legs)!=2 or age<0 or any(not 0<=(now-v).total_seconds()<=90*60 or
+                         abs((v-stamp).total_seconds())>20 or v.astimezone(ET).date()!=et.date() or
+                         not "10:45"<=v.astimezone(ET).strftime("%H:%M")<="16:00" for v in legs)
+                      or abs((legs[0]-legs[1]).total_seconds())>DESK_QUOTE_SKEW_SECONDS):
+                    blockers.append("option_legs_not_live")
+                else:
+                    is_fresh=max(age,*((now-v).total_seconds() for v in legs))<=DESK_LIVE_MAX_SECONDS
+                    quote_status=("live" if is_fresh else "stale") if raw_mode=="real_time" else raw_mode
+                    if quote_status=="stale":
+                        blockers.append("options_stale")
+                    safe={**setup_candidate,"short_quote_as_of":iso(legs[0]),"long_quote_as_of":iso(legs[1]),
+                          "feed_mode":raw_mode,"timestamp_basis":stamp_basis,"quote_status":quote_status,
+                          "verified_next_session":True,
+                          "multiplier":100,"fee_buffer_usd":2.8}
+            gate=setup_candidate.get("gate")
+            if gate!="passes":
+                blockers.append(gate if gate in ("blocked_sma200","blocked_event") else "gate_unknown")
+    return {"status":"ready" if safe and not blockers else "blocked" if safe else "unavailable",
+            "blockers":blockers,"candidate":safe,"source":source}
+
+
+def desk_vix_history(charts,now):
+    """Select the desk's rolling three calendar months of approved VIX closes."""
+    today=now.astimezone(ET).date()
+    y,m=today.year,today.month-3
+    if m<1:
+        y,m=y-1,m+12
+    first=date(y,m,min(today.day,monthrange(y,m)[1])).isoformat()
+    rows=[{"date":p["date"],"close":p["close"]} for p in charts["series"].get("VIX",[]) if p["date"]>=first]
+    latest=charts["last_close_dates"].get("VIX")
+    return {"status":charts["status_by_symbol"].get("VIX","available") if rows else
+            "unconfigured" if charts["status"]=="unconfigured" else "unavailable",
+            "source":charts["source"] if rows else None,"as_of":latest if rows else None,"series":rows}
+
+
 def enabled(name):
     return os.getenv(name, "").strip().lower() == "true"
 
 
 def private_marker(value):
     return bool(re.search(r"\b(?:ibkr|interactive\s*brokers|private|personal)\b", str(value), re.I))
+
+
+def public_live_desk_url():
+    """Expose only explicitly approved, non-secret HTTPS public distribution URLs."""
+    if not enabled("SPS_PUBLIC_LIVE_DESK_APPROVED"):
+        return None
+    raw=os.getenv("SPS_PUBLIC_LIVE_DESK_URL","").strip()
+    if not raw or len(raw)>250 or private_marker(raw) or any(c.isspace() or ord(c)<32 for c in raw):
+        return None
+    try:
+        p=urlsplit(raw)
+        hostname=p.hostname or ""
+        if (p.scheme!="https" or p.username is not None or p.password is not None or
+            "?" in raw or "#" in raw or "\\" in raw or p.port not in (443,None)):
+            return None
+    except ValueError:
+        return None
+    if not re.fullmatch(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}",hostname):
+        return None
+    if hostname.endswith((".localhost",".local",".internal",".lan",".home",".test",".invalid",".onion")):
+        return None
+    return raw
 
 
 def fetch_public_feed(prefix, *, require_distribution=False):
@@ -349,6 +496,7 @@ def snapshot(now, events, feed=None, *, configured=False, previous=None, source=
     market_lane,options_lane=(lanes[name] for name in ("market","options"))
     market_feed,options_feed=(lane["feed"] for lane in (market_lane,options_lane))
     market,candidates={},[]
+    xsp_raw,xsp_proposal,xsp_candidate={},{},None
     if market_feed is not None:
         items=object_or_empty(market_feed.get("instruments"))
         for s in SYMBOLS:
@@ -358,9 +506,13 @@ def snapshot(now, events, feed=None, *, configured=False, previous=None, source=
         each=object_or_empty(options_feed.get("entries"))
         chains=object_or_empty(options_feed.get("chains"))
         for s in ("SPY","XSP"):
-            proposal=select_chain(s,object_or_empty(chains[s])) if s in chains else object_or_empty(each.get(s))
-            if c:=candidate(s,proposal,market,ev,now):
+            raw=object_or_empty(chains[s]) if s in chains else object_or_empty(each.get(s))
+            proposal=select_chain(s,raw) if s in chains else raw
+            c=candidate(s,proposal,market,ev,now)
+            if c:
                 candidates.append(c)
+            if s=="XSP":
+                xsp_raw,xsp_proposal,xsp_candidate=raw,proposal,c
     if market:
         m_status="available"
     elif market_lane["status"]=="unconfigured":
@@ -372,13 +524,21 @@ def snapshot(now, events, feed=None, *, configured=False, previous=None, source=
     c_status="available" if candidates else "unconfigured" if options_lane["status"]=="unconfigured" else "unavailable"
     def stated_source(lane):
         return str(lane["source"])[:80] if lane["source"] and lane["status"]=="connected" else None
+    market_source,option_source=stated_source(market_lane),stated_source(options_lane)
+    charts=chart_snapshot(market_feed,now,market_lane["status"]!="unconfigured" and history_approved,market_source)
+    instruments=object_or_empty(object_or_empty(market_feed).get("instruments"))
+    desk_market={s:desk_observation(object_or_empty(instruments.get(s)),market_lane["status"],market_source,now)
+                 for s in DESK_SYMBOLS}
+    setup=desk_option_status(now,market_lane["status"],options_lane["status"],xsp_proposal,xsp_raw,xsp_candidate,desk_market,option_source)
     return {"schema_version":1,"checked_at":iso(now),
             "sources":{name:{"status":lane["status"],"label":stated_source(lane)} for name,lane in lanes.items()},
             "market":{"status":m_status,"as_of":max((r["as_of"] for r in market.values()),default=None),
                       "source":stated_source(market_lane) if market else None,"instruments":market},
-            "charts":chart_snapshot(market_feed,now,market_lane["status"]!="unconfigured" and history_approved,stated_source(market_lane)),
+            "charts":charts,
             "events":ev,"candidates":{"status":c_status,"as_of":max((r["as_of"] for r in candidates),default=None),
-                                     "source":stated_source(options_lane) if candidates else None,"items":candidates}}
+                                     "source":option_source if candidates else None,"items":candidates},
+            "desk":{"live_max_age_seconds":DESK_LIVE_MAX_SECONDS,"market":desk_market,
+                    "setup":setup,"vix_history":desk_vix_history(charts,now)}}
 
 
 def main():
@@ -391,9 +551,9 @@ def main():
     except Exception:
         events={"status":"unavailable","checked_at":iso(now),"items":[]}
     lanes=environment_lanes()
-    previous=prior()  # previous official calendar and verified public Watchlist observations only
+    previous=prior() if events.get("status")!="available" else None
     public=snapshot(now,events,previous=previous,history_approved=enabled("SPS_PUBLIC_HISTORY_APPROVED"),lanes=lanes)
-    public["watchlist"]=watchlist_snapshot(now,previous=previous)
+    public["live_desk"]={"url":public_live_desk_url()}
     v.output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=v.output.parent,delete=False) as f:
         json.dump(public,f,ensure_ascii=False,indent=2,allow_nan=False)

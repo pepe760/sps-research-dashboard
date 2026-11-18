@@ -1,0 +1,25 @@
+# Connect a licensed feed to the public XSP desk
+
+The live data lane is not active until the operator has usable vendor credentials, written redistribution permission, and a running adapter. Ask [ThetaData Business](https://www.thetadata.net/commercial-use) or another licensed provider for a quote. ThetaData lists SPX and VIX on its commercial Cboe index feed; confirm **native XSP cash index** coverage and the exact symbol under the contracted entitlement. Native XSP options do not establish coverage of the XSP cash index. As a second route, [Cboe All Access API](https://datashop.cboe.com/cboe-all-access-api) documents separate CGIF index and OPRA option requirements and separate redistribution rights.
+
+**Ask the vendor to confirm in writing:**
+
+- Live native XSP, SPX and VIX cash index values, with source-event timestamps; the last three calendar months of completed VIX daily closes; and enough completed SPX closes to calculate the 200-session SMA.
+- Live OPRA NBBO bid/ask, per-contract quote timestamps, contract identity and put delta for next-session XSP options. Confirm the Greek source, exact timestamp meaning, availability of native XSP during the regular US session, supported refresh rate and fees.
+- Anonymous public display on GitHub Pages, access to the resulting public JSON, storage of three months of VIX closes, short cache retention, and display of the two selected legs and derived credit/risk. Include any separate exchange/SIP approvals, attribution, usage limits, and total recurring cost. Keep full chains and credentials off the public endpoint. Individual/personal entitlements are not the public feed.
+
+## ThetaData adapter inputs
+
+These are documented Theta Terminal v3 routes; substitute actual dates and use `format=json`. Run the Terminal and vendor adapter on the server side, never in the visitor's browser.
+
+| Data | Terminal request |
+| --- | --- |
+| Latest native index values | [Index snapshot](https://www.thetadata.net/docs/operations/index_snapshot_price.html): `GET /v3/index/snapshot/price?symbol=VIX,SPX,XSP&current_day_only=true&format=json`. Validate the cash symbols using [index symbols](https://www.thetadata.net/docs/operations/index_list_symbols.html): `GET /v3/index/list/symbols?format=json`. |
+| VIX 3-month record | [Index EOD](https://www.thetadata.net/docs/operations/index_history_eod.html): `GET /v3/index/history/eod?symbol=VIX&start_date=YYYYMMDD&end_date=YYYYMMDD&format=json`. Start three calendar months before the current US market date; end at the latest session with a completed vendor EOD record. Keep VIX spot separate from this close series. |
+| Listed expirations | [Expirations](https://www.thetadata.net/docs/operations/option_list_expirations.html): `GET /v3/option/list/expirations?symbol=XSP&format=json`. Cross-check against [Cboe options hours and holidays](https://www.cboe.com/about/hours/us-options/) and [XSP specifications](https://www.cboe.com/tradable-products/sp-500/xsp-options/specifications/). Verify the next **actual regular session** and a listed PM expiry on that date; use neither calendar tomorrow nor just the next listed expiry. |
+| Freeze selection | [Greeks snapshot](https://www.thetadata.net/docs/operations/option_snapshot_greeks_first_order.html): `GET /v3/option/snapshot/greeks/first_order?symbol=XSP&expiration=YYYYMMDD&right=put&current_day_only=true&format=json`. Capture at **09:45 ET**; retain the original chain, selection time and selected strikes server-side. Use a put near −0.10 delta and its exact 15-point lower put at the same expiry. If the 09:45 observation was missed, do not relabel a later snapshot. |
+| Reprice the two fixed legs | [NBBO snapshot](https://www.thetadata.net/docs/operations/option_snapshot_quote.html): `GET /v3/option/snapshot/quote?symbol=XSP&expiration=YYYYMMDD&right=put&strike=STRIKE&current_day_only=true&format=json` for each leg. Keep each original quote timestamp. Use the NBBO observation time; the Greek's underlying price timestamp and the server's request time are distinct fields. |
+
+Normalize to [the market and options lane contract](FEED_SCHEMA.md). Convert vendor timestamps to time-zone-qualified ISO, using the vendor-confirmed source time zone and DST rules. Set `feed_mode: "real_time"` and `timestamp_basis: "exchange"` or `"provider_event"` only when verified. Supply current per-leg market observations and **completed prior** SPX close/SMA separately; yesterday's close is not the current spot quote. Missing native XSP, a stale leg, or an unverified expiry should suppress the live setup. Reprice from 10:45 ET until the strategy cutoff or actual early close, whichever is earlier; don't select a new strike later.
+
+Continue with [LIVE_DASHBOARD.md](LIVE_DASHBOARD.md) to run the approved lane server, expose its sanitized HTTPS desk URL, and connect Pages. Before enabling it publicly, check one ordinary session and one weekend/holiday transition with the actual vendor response. Compare both quoted legs and their timestamps against the vendor; verify the VIX current mark and completed close series update independently. The desk is read-only and does not submit orders.

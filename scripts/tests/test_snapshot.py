@@ -26,6 +26,16 @@ def events(*items,status="available"):
     return {"status":status,"checked_at":"2026-11-20T16:17:00Z","items":list(items)}
 
 
+def live_feed():
+    core=FEED["entries"]["XSP"]
+    return {
+        "instruments":{"SPX":{**FEED["instruments"]["SPX"],"feed_mode":"real_time","timestamp_basis":"exchange"},
+                       "XSP":{"spot":735,"as_of":core["as_of"],"feed_mode":"real_time","timestamp_basis":"provider_event"},
+                       "VIX":{"spot":18.5,"as_of":core["as_of"],"feed_mode":"real_time","timestamp_basis":"exchange"}},
+        "entries":{"XSP":{**core,"feed_mode":"real_time","timestamp_basis":"exchange",
+                          "short_quote_as_of":"2026-11-20T16:15:58Z","long_quote_as_of":"2026-11-20T16:15:54Z"}}}
+
+
 class TestSnapshot(unittest.TestCase):
     def test_no_license_no_fetch_and_no_candidates(self):
         with patch.dict("os.environ",{"SPS_PUBLIC_FEED_APPROVED":"false","SPS_PUBLIC_FEED_URL":"https://example.com"}):
@@ -35,6 +45,96 @@ class TestSnapshot(unittest.TestCase):
         got=r.snapshot(NOW,events(CPI))
         self.assertEqual(got["market"]["status"],"unconfigured")
         self.assertEqual(got["candidates"]["items"],[])
+        self.assertEqual(got["desk"]["market"]["VIX"]["status"],"unconfigured")
+        self.assertIsNone(got["desk"]["market"]["VIX"]["spot"])
+        self.assertIsNone(got["desk"]["setup"]["candidate"])
+        self.assertIn("options_unconfigured",got["desk"]["setup"]["blockers"])
+
+    def test_live_desk_valid_same_expiry_pair_and_natural_credit(self):
+        feed=live_feed()
+        got=r.snapshot(NOW,events(),feed,configured=True,source="Authorized vendor")["desk"]
+        self.assertEqual(got["market"]["VIX"]["status"],"live")
+        self.assertEqual(got["market"]["VIX"]["age_seconds"],60)
+        self.assertEqual(got["market"]["VIX"]["source"],"Authorized vendor")
+        self.assertEqual(got["setup"]["status"],"ready")
+        self.assertEqual(got["setup"]["blockers"],[])
+        item=got["setup"]["candidate"]
+        self.assertEqual((item["expiry"],item["width"],item["multiplier"],item["fee_buffer_usd"]),("2026-11-23",15,100,2.8))
+        self.assertEqual((item["credit"],item["max_loss_usd"],item["short_quote_as_of"],item["long_quote_as_of"]),
+                         (.21,1481.8,"2026-11-20T16:15:58Z","2026-11-20T16:15:54Z"))
+        self.assertNotIn("provider_secret",str(got))
+
+    def test_live_desk_does_not_promote_delayed_or_ambiguous_timestamps(self):
+        feed=live_feed()
+        feed["instruments"]["VIX"]["feed_mode"]="delayed"
+        feed["instruments"]["XSP"]["timestamp_basis"]="received_at"
+        feed["entries"]["XSP"]["feed_mode"]="delayed"
+        got=r.snapshot(NOW,events(),feed,configured=True)["desk"]
+        self.assertEqual(got["market"]["VIX"]["status"],"delayed")
+        self.assertEqual(got["market"]["XSP"]["status"],"unspecified")
+        self.assertEqual(got["setup"]["status"],"blocked")
+        self.assertEqual(got["setup"]["candidate"]["quote_status"],"delayed")
+        self.assertIn("xsp_not_live",got["setup"]["blockers"])
+        self.assertIn("options_not_live",got["setup"]["blockers"])
+        feed["entries"]["XSP"]["feed_mode"]="real_time"
+        feed["entries"]["XSP"]["long_quote_as_of"]="2026-11-20T16:15:42Z"
+        got=r.snapshot(NOW,events(),feed,configured=True)["desk"]["setup"]
+        self.assertNotEqual(got["status"],"ready")
+        self.assertIn("option_legs_not_live",got["blockers"])
+        self.assertIsNone(got["candidate"])
+
+    def test_live_desk_rejects_stale_and_outside_hours_as_ready(self):
+        feed=live_feed()
+        later=NOW+timedelta(minutes=5)
+        got=r.snapshot(later,events(),feed,configured=True)["desk"]
+        self.assertEqual(got["market"]["SPX"]["status"],"stale")
+        self.assertEqual(got["setup"]["status"],"blocked")
+        self.assertIn("options_stale",got["setup"]["blockers"])
+        self.assertEqual(got["setup"]["candidate"]["quote_status"],"stale")
+        outside=NOW.replace(hour=21)
+        got=r.snapshot(outside,events(),feed,configured=True)["desk"]["setup"]
+        self.assertNotEqual(got["status"],"ready")
+        self.assertIn("outside_entry_window",got["blockers"])
+
+    def test_live_desk_rule_c_and_unverified_sessions_block(self):
+        feed=live_feed()
+        got=r.snapshot(NOW,events(CPI),feed,configured=True)["desk"]["setup"]
+        self.assertEqual(got["status"],"blocked")
+        self.assertIn("blocked_event",got["blockers"])
+        feed["entries"]["XSP"]["verified_next_session"]=False
+        got=r.snapshot(NOW,events(),feed,configured=True)["desk"]["setup"]
+        self.assertIn("calendar_unverified",got["blockers"])
+        self.assertIsNone(got["candidate"])
+
+    def test_live_desk_vix_uses_only_approved_rolling_completed_history(self):
+        days=[]
+        d=NOW.date()
+        for _ in range(130):
+            if d.weekday()<5:
+                days.append({"date":d.isoformat(),"close":20,"complete":True})
+            d-=timedelta(days=1)
+        feed=live_feed()
+        feed["history"]={"VIX":{"as_of":"2026-11-20T16:16:00Z","bars":days}}
+        denied=r.snapshot(NOW,events(),feed,configured=True)["desk"]["vix_history"]
+        self.assertEqual(denied["series"],[])
+        got=r.snapshot(NOW,events(),feed,configured=True,history_approved=True)["desk"]["vix_history"]
+        self.assertEqual(got["series"][0],{"date":"2026-08-20","close":20})
+        self.assertEqual(got["series"][-1],{"date":"2026-11-19","close":20})
+        self.assertEqual(got["as_of"],"2026-11-19")
+
+    def test_live_desk_endpoint_must_be_public_and_explicitly_approved(self):
+        good="https://market.example.com/v1/xsp-desk"
+        with patch.dict("os.environ",{"SPS_PUBLIC_LIVE_DESK_URL":good},clear=True):
+            self.assertIsNone(r.public_live_desk_url())
+        with patch.dict("os.environ",{"SPS_PUBLIC_LIVE_DESK_APPROVED":"true"},clear=True):
+            for unsupported in ("https://private.example.com/desk","https://name:token@example.com/desk",
+                                "https://example.com/desk?token=secret","https://example.com/desk#fragment",
+                                "http://example.com/desk","https://127.0.0.1/desk","https://host.local/desk",
+                                "https://example.com:444/desk","https://example.com\\@another.com/desk"):
+                with patch.dict("os.environ",{"SPS_PUBLIC_LIVE_DESK_URL":unsupported}):
+                    self.assertIsNone(r.public_live_desk_url(),unsupported)
+            with patch.dict("os.environ",{"SPS_PUBLIC_LIVE_DESK_URL":good}):
+                self.assertEqual(r.public_live_desk_url(),good)
 
     def test_only_approved_fields_and_candidate_credit(self):
         got=r.snapshot(NOW,events(),FEED,configured=True)

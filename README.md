@@ -1,13 +1,16 @@
-# SPS Research Dashboard
+# XSP SPS · 開倉核對台
 
-Public research notes, market context and an illustrative strike calculator for SPY and XSP short put spreads.
+[Open the public desk](https://pepe760.github.io/sps-research-dashboard/#watchlist). It is a no-sign-in, read-only setup checker for a next-session XSP put credit spread. The homepage shows XSP/SPX/VIX source times, one two-leg candidate if verified, a beginner's checklist, and only the last three calendar months of completed VIX closes.
 
-- Website: [SPS Research Dashboard](https://pepe760.github.io/sps-research-dashboard/)
-- Public JSON: [latest status](https://pepe760.github.io/sps-research-dashboard/data/status.json)
-- Changes in the official event calendar are checked hourly at minute 17 UTC, with a manual refresh available in GitHub Actions. Run times can be delayed by GitHub. Source times and stale states are separate from refresh times.
-- No account data, user names, private research archives, paid quotes or signed credentials belong in the public repository. An optional, attributed TradingView widget is only a visual reference; it is not queried by the app.
+No trade is placed. The public site does not use a personal brokerage feed or infer an XSP option from SPY. If market or options data is missing, stale or delayed, live verification is unavailable. The site links to Cboe for reference and provides an optional manual two-leg calculator and paper record held in each browser.
 
-## Run locally
+## Live setup
+
+Use the [step-by-step live deployment guide](LIVE_DASHBOARD.md), [provider requirements](RELEASE_PUB_LIVE.md), and [adapter feed schema](FEED_SCHEMA.md). A licensed and configured external data route is needed for actual live quotes. The desk polls that service every 15 seconds while visible, and rejects an old build or leg quote. The hourly GitHub Pages build only supplies a fallback snapshot and economic calendar; it isn't the live route. The live output retains the provider observation time, not the website check time.
+
+The option setup is research-rule-specific: native XSP, next actual regular session PM expiration (verified by the adapter), signed put delta nearest −0.10, exact W15, frozen 09:45 ET selection, quote check starting 10:45 ET, and validated market timestamps. The $2.80 round-trip reserve is a model input; check actual broker fees and quoted combo credit.
+
+## Local check
 
 ```sh
 python -m unittest discover -s scripts/tests
@@ -15,22 +18,4 @@ python scripts/refresh.py
 python -m http.server 8000 --directory site
 ```
 
-If the official agencies cannot be reached, the page reports unavailable or stale. If no redistribution-authorized feed is configured, the quote-derived market/regime/strike fields remain unavailable. The browser calculator can still use a manually entered price and volatility estimate; its output is a model illustration and does not say that the strikes are listed or executable.
-
-## Hourly publishing
-
-In **Settings → Pages → Build and deployment**, choose **GitHub Actions**. The workflow `Hourly public dashboard` runs on pushes to `main`, manual dispatch, and hourly via cron. No brokerage is connected. The public database is a small versioned JSON document served by Pages under `data/status.json`. A last-known event calendar is retained as stale when the new fetch is incomplete.
-
-Configure permitted public index and option adapters independently. In **Settings → Secrets and variables → Actions**, use `SPS_PUBLIC_MARKET_APPROVED=true` and `SPS_PUBLIC_MARKET_URL` for the market endpoint; also set `SPS_PUBLIC_HISTORY_APPROVED=true` to publish daily bars/SMA. Use `SPS_PUBLIC_OPTIONS_APPROVED=true` and `SPS_PUBLIC_OPTIONS_URL` for the options endpoint. Keep URLs and optional bearer tokens in Secrets; `…_APPROVED` and a non-sensitive `…_LABEL` go in Variables. The original `SPS_PUBLIC_FEED_*` combined mode still works for lanes without dedicated settings. The public JSON tracks both source connections separately. Review [the feed schema and guardrails](FEED_SCHEMA.md) before enabling a feed. The build only deploys an allowlist of static assets and `data/status.json`; do not place or reference brokerage, Yahoo collector, or private SQLite files in the repo.
-
-## Study scope
-
-Historical numbers are aggregate quote replays. One spread per opportunity, approximate −0.10 short put delta, nominal 15-point width, next regular session, $2.80 assumed round-trip fees. SPY and XSP have distinct selectors and results. The transition Z rule is a research hypothesis, not a trading instruction. Do not treat a displayed candidate as a fill or a trade order.
-
-## Charts and paper tracking
-
-The homepage has SPX and VIX charts with one- and three-month views. Numeric daily bars, SMA20/50/200, and automatic option-pair figures require a permitted feed; TradingView embeds do not populate the JSON. The paper desk accepts user-entered bid/ask quotes and keeps any saved records in that browser only. Yahoo Finance is a direct-view link, not a pipeline; the linked data providers do not grant redistribution by default. See [real-time options and required permissions](FEED_SCHEMA.md#real-time-vendor-options).
-
-## Public Watchlist
-
-Open [the public Watchlist](https://pepe760.github.io/sps-research-dashboard/#watchlist) directly. It shares the previously published SPY data from the companion dashboard, with its exchange observation time, source and stale status, and shows vendor-adjusted SPY daily closes with SMA20/50/200. It does not substitute SPY for SPX or turn an ETF observation into an option spread quote.
+GitHub Pages deploys a static file allowlist; account data, brokerage snapshots, licensed archives and keys do not belong in it. Put licensed adapter secrets on the operator host, and set the public live URL in Pages only with public web display and JSON redistribution authorized.
