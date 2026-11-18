@@ -275,12 +275,16 @@
   }
 
   function providerFrame(kind, title, config) {
-    // Run the supported widget in an opaque-origin frame; it cannot read our paper ledger.
+    // The provider's own cross-origin iframe cannot read the site's paper ledger.
     const frame = document.createElement("iframe");
     frame.className = kind === "advanced-chart" ? "provider-frame advanced-chart-widget" : "provider-frame provider-tape";
     frame.title = title;
-    frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
-    frame.srcdoc = '<!doctype html><html lang="zh-HK"><meta charset="utf-8"><style>html,body,.tradingview-widget-container{height:100%;margin:0}.tradingview-widget-container__widget{height:calc(100% - 20px)}.tradingview-widget-copyright{font:10px system-ui;margin-top:2px;text-align:center}.tradingview-widget-copyright a{color:#276f60}</style><div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener noreferrer" target="_blank">Track all markets on TradingView</a></div><script type="text/javascript" async src="https://s3.tradingview.com/external-embedding/embed-widget-' + kind + '.js">' + JSON.stringify(config).replace(/</g, "\u003c") + '</script></div></html>';
+    const url = new URL("https://www.tradingview-widget.com/embed-widget/" + kind + "/");
+    url.searchParams.set("locale", config.locale);
+    const { locale, ...settings } = config;
+    url.hash = encodeURIComponent(JSON.stringify({ ...settings, width: "100%", height: "100%", utm_source: new URL(location.href).hostname, utm_medium: "widget_new", utm_campaign: kind }));
+    frame.referrerPolicy = "strict-origin-when-cross-origin";
+    frame.src = url.href;
     return frame;
   }
 
@@ -288,8 +292,12 @@
     const host = $("chart-" + symbol.toLowerCase());
     host.replaceChildren();
     if (state.providerDisabled) { host.append(empty("第三方圖表已停用", "可使用下方獨立來源連結，或者重新載入第三方圖表。")); return; }
-    const frame = providerFrame("advanced-chart", symbol + " TradingView 每日走勢 — 獨立參考，可能延遲", { autosize: true, symbol: symbol === "SPX" ? "SP:SPX" : "CBOE:VIX", interval: "D", timezone: "America/New_York", theme: "light", style: "1", locale: "zh_TW", allow_symbol_change: false, hide_top_toolbar: false, hide_side_toolbar: true, withdateranges: true, range: state.chartRange, calendar: false, studies: ["MASimple@tv-basicstudies"], support_host: "https://www.tradingview.com" });
-    host.append(frame, el("p", "chart-inline-note", "TradingView 獨立參考圖 · 可能延遲。如未能載入，可用下方獨立來源連結。"), el("p", "chart-ma-note", "第三方圖採用可調整嘅 MA；指定 SMA 長度由已授權數值圖顯示。"));
+    const frame = providerFrame("advanced-chart", symbol + " TradingView 走勢 — 獨立參考，可能延遲", { autosize: true, symbol: symbol === "SPX" ? "SP:SPX" : "CBOE:VIX", interval: "D", timezone: "America/New_York", theme: "light", style: "1", locale: "zh_TW", allow_symbol_change: false, hide_top_toolbar: false, hide_side_toolbar: true, withdateranges: true, range: state.chartRange, calendar: false, studies: ["MASimple@tv-basicstudies"], support_host: "https://www.tradingview.com" });
+    const providerLink = el("a", "chart-provider-link", "TradingView · 開啟完整圖表 ↗");
+    providerLink.href = "https://www.tradingview.com/symbols/" + (symbol === "SPX" ? "SP-SPX" : "CBOE-VIX") + "/";
+    providerLink.target = "_blank";
+    providerLink.rel = "noopener noreferrer";
+    host.append(frame, providerLink, el("p", "chart-inline-note", "TradingView 獨立參考圖 · 可能延遲。"), el("p", "chart-ma-note", "第三方圖嘅 K 線週期同 MA 可喺圖內調整；指定每日 SMA 由已授權數值圖顯示。"));
   }
 
   function renderCharts() {
