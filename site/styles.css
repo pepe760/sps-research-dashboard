@@ -106,3 +106,5 @@ footer span{margin-right:auto;font-weight:650}
 @media(prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
 
 .quote-fact{display:flex;flex-direction:column;gap:.12rem}.quote-fact strong{font-size:1.08rem}.quote-fact small{color:var(--muted)}
+
+.yahoo-spot-form,.yahoo-file-actions{display:flex;align-items:end;flex-wrap:wrap;gap:.5rem;margin:.7rem 0}.yahoo-spot-form label{display:flex;flex-direction:column;gap:.2rem;font-size:.77rem}.yahoo-spot-form :is(input,select){padding:.4rem .45rem;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);max-width:100%}.yahoo-file-actions label{font-size:.78rem}.yahoo-file-actions input{max-width:100%;margin:.25rem 0}

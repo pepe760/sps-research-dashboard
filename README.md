@@ -2,7 +2,7 @@
 
 [Open the public desk](https://pepe760.github.io/sps-research-dashboard/#watchlist). It is a no-sign-in, read-only setup checker for a next-session XSP put credit spread. The homepage shows XSP/SPX/VIX source times, one two-leg candidate if verified, a beginner's checklist, and only the last three calendar months of completed VIX closes.
 
-No trade is placed. The public site does not use a personal brokerage feed or infer an XSP option from SPY. If market or options data is missing, stale or delayed, live verification is unavailable. The site links to Cboe for reference and provides an optional manual two-leg calculator and paper record held in each browser.
+No trade is placed. The public site does not use a personal brokerage feed or infer an XSP option from SPY. If market or options data is missing, stale or delayed, live verification is unavailable. The homepage links to Yahoo Finance for ^VIX latest/3M, ^XSP and ^GSPC. Users can enter a displayed spot with its original time or load their own ^VIX daily Date/Close CSV locally; neither supplies or verifies a live option. The manual two-leg calculator and paper records remain browser-only.
 
 ## Live setup
 
