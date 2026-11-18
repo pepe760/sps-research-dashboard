@@ -5,8 +5,7 @@
   const STATUS_URL = "./data/status.json";
   const SYMBOLS = ["SPY", "XSP", "SPX", "VIX"];
   const LABELS = { SPY: "ETF OPTIONS", XSP: "MINI INDEX", SPX: "INDEX REFERENCE", VIX: "VOLATILITY INDEX" };
-  const state = { data: null, chartRange: "1M", chartsKey: null, providerDisabled: false };
-  try { state.providerDisabled = localStorage.getItem("sps-provider-charts-disabled") === "true"; } catch { /* Storage can be blocked. */ }
+  const state = { data: null, chartRange: "1M", chartsKey: null };
   const money = (n, digits = 2) => new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
   const finite = (v) => typeof v === "number" && Number.isFinite(v);
   const GATE_LABELS = { passes: "條件已通過", blocked_sma200: "SMA200 阻擋", blocked_event: "事件日阻擋", unknown: "資料未齊／未知" };
@@ -288,21 +287,21 @@
     return frame;
   }
 
-  function renderProviderChart(symbol) {
+  function renderSourceLinks(symbol) {
     const host = $("chart-" + symbol.toLowerCase());
-    host.replaceChildren();
-    if (state.providerDisabled) { host.append(empty("第三方圖表已停用", "可使用下方獨立來源連結，或者重新載入第三方圖表。")); return; }
-    const frame = providerFrame("advanced-chart", symbol + " TradingView 走勢 — 獨立參考，可能延遲", { autosize: true, symbol: symbol === "SPX" ? "SP:SPX" : "CBOE:VIX", interval: "D", timezone: "America/New_York", theme: "light", style: "1", locale: "zh_TW", allow_symbol_change: false, hide_top_toolbar: false, hide_side_toolbar: true, withdateranges: true, range: state.chartRange, calendar: false, studies: ["MASimple@tv-basicstudies"], support_host: "https://www.tradingview.com" });
-    const providerLink = el("a", "chart-provider-link", "TradingView · 開啟完整圖表 ↗");
-    providerLink.href = "https://www.tradingview.com/symbols/" + (symbol === "SPX" ? "SP-SPX" : "CBOE-VIX") + "/";
-    providerLink.target = "_blank";
-    providerLink.rel = "noopener noreferrer";
-    host.append(frame, providerLink, el("p", "chart-inline-note", "TradingView 獨立參考圖 · 可能延遲。"), el("p", "chart-ma-note", "第三方圖嘅 K 線週期同 MA 可喺圖內調整；指定每日 SMA 由已授權數值圖顯示。"));
+    const ref = symbol === "SPX" ? "SP-SPX" : "CBOE-VIX";
+    const source = el("a", "secondary-button source-chart-button", "去 TradingView 睇 " + symbol + " 原圖 ↗");
+    source.href = "https://www.tradingview.com/symbols/" + ref + "/";
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    const panel = empty("未有可公開顯示嘅指數圖", "原生指數可喺來源網站查看。接駁獲授權收市數據後，呢度會顯示 1M／3M 同 SMA。");
+    panel.append(source);
+    host.replaceChildren(panel);
   }
 
   function renderCharts() {
     const charts = state.data?.charts;
-    const key = JSON.stringify([charts || null, state.chartRange, state.providerDisabled]);
+    const key = JSON.stringify([charts || null, state.chartRange]);
     if (state.chartsKey === key) return;
     state.chartsKey = key;
     let fallbacks = 0;
@@ -316,15 +315,16 @@
         renderNumericChart(symbol, rows, charts);
       } else {
         fallbacks++;
-        badge.textContent = state.providerDisabled ? "第三方已停用" : "TradingView · 可延遲";
+        badge.textContent = "未接駁 · 可前往原圖";
         badge.className = "pill neutral-pill";
-        renderProviderChart(symbol);
+        renderSourceLinks(symbol);
       }
     }
-    $("chart-provider-toggle").hidden = fallbacks === 0;
-    $("chart-provider-toggle").textContent = state.providerDisabled ? "重新載入第三方圖表" : "停用第三方圖表";
-    $("charts-source-note").textContent = fallbacks ? "未有完整數值來源嘅圖表，改用 TradingView 獨立顯示；數據可能延遲。本頁唔抽取圖內數值，亦唔用佢觸發任何條件。" : "來源：" + (charts.source || "未提供") + " · " + (charts.as_of || "as-of 未提供") + "。SMA 使用已提供數值；缺值保留空白，唔補造。";
-    document.querySelectorAll("[data-chart-range]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.chartRange === state.chartRange)));
+    $("charts-source-note").textContent = fallbacks ? "未接駁嘅指數只提供原圖連結，唔用 CFD、期貨或者模擬價格替代。指數日線未公開前，1M／3M 切換暫停。" : "來源：" + (charts.source || "未提供") + " · " + (charts.as_of || "as-of 未提供") + "。SMA 使用已提供數值；缺值保留空白。";
+    document.querySelectorAll("[data-chart-range]").forEach((button) => {
+      button.disabled = fallbacks === 2;
+      button.setAttribute("aria-pressed", String(button.dataset.chartRange === state.chartRange));
+    });
   }
 
   // Peter J. Acklam's rational inverse-normal approximation; model use only.
@@ -393,11 +393,6 @@
   $("gate-symbol").addEventListener("change", renderGates);
   $("calc-symbol").addEventListener("change", () => { $("calc-grid").value = $("calc-symbol").value === "XSP" ? "1" : "0.5"; });
   document.querySelectorAll("[data-chart-range]").forEach((button) => button.addEventListener("click", () => { state.chartRange = button.dataset.chartRange; renderCharts(); }));
-  $("chart-provider-toggle").addEventListener("click", () => {
-    state.providerDisabled = !state.providerDisabled;
-    try { localStorage.setItem("sps-provider-charts-disabled", String(state.providerDisabled)); } catch { /* Storage can be blocked. */ }
-    renderCharts();
-  });
   $("tv-load").addEventListener("click", () => {
     const button = $("tv-load");
     if (button.disabled) return;
@@ -405,7 +400,7 @@
     button.textContent = "TradingView 已要求載入";
     $("tv-container").hidden = false;
     $("tv-status").textContent = "TradingView 獨立顯示；市場資料可能延遲，唔會讀入任何計算。";
-    $("tv-container").append(providerFrame("ticker-tape", "TradingView 市場參考帶 — 可能延遲", { symbols: [{ proName: "SP:SPX", title: "S&P 500" }, { proName: "AMEX:SPY", title: "SPY" }, { proName: "CBOE:VIX", title: "VIX" }], showSymbolLogo: true, isTransparent: true, displayMode: "adaptive", colorTheme: "light", locale: "zh_TW" }));
+    $("tv-container").append(providerFrame("ticker-tape", "TradingView 市場參考帶 — 可能延遲", { symbols: [{ proName: "AMEX:SPY", title: "SPY ETF" }], showSymbolLogo: true, isTransparent: true, displayMode: "adaptive", colorTheme: "light", locale: "zh_TW" }));
   });
   if ("IntersectionObserver" in window) {
     const links = Array.from(document.querySelectorAll(".nav-link"));

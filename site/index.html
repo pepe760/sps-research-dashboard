@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light">
   <meta name="description" content="SPY / XSP short put spread 公開研究儀表板。資料狀態、入場條件核對、模型 strike 示範及研究方法。">
   <title>SPS Research Desk · 期權研究</title>
-  <link rel="stylesheet" href="./styles.css?v=market-charts-2">
+  <link rel="stylesheet" href="./styles.css?v=market-charts-3">
   <link rel="stylesheet" href="./trade-desk.css">
-  <script src="./app.js?v=market-charts-2" defer></script>
+  <script src="./app.js?v=market-charts-3" defer></script>
   <script src="./trade-desk.js" defer></script>
 </head>
 <body>
@@ -31,12 +31,12 @@
     <header class="topbar"><span class="eyebrow">OPTIONS RESEARCH / 期權研究</span><a class="source-link" href="./data/status.json">資料狀態 JSON <span aria-hidden="true">↗</span></a></header>
     <section id="market-charts" class="market-charts-section" aria-labelledby="charts-title">
       <div class="section-heading chart-section-heading"><div><span class="eyebrow">MARKET CONTEXT · DAILY CHARTS</span><h2 id="charts-title">SPX 同 VIX，先睇走勢</h2></div><div class="chart-range-switch" role="group" aria-label="圖表顯示期間"><button type="button" data-chart-range="1M" aria-pressed="true">1M</button><button type="button" data-chart-range="3M" aria-pressed="false">3M</button></div></div>
-      <p class="section-intro">SPX 睇趨勢，VIX 睇波幅。已提供嘅每日收市數據會直接畫圖；未連接數據時，獨立顯示 TradingView 參考圖，可能延遲。</p>
+      <p class="section-intro">SPX 睇趨勢，VIX 睇波幅。接駁獲授權每日收市資料後，呢度會直接畫圖。未連接時，可去來源網站睇原圖。</p>
       <div class="chart-cards">
         <article class="panel price-chart-card" aria-labelledby="spx-chart-title"><div class="price-chart-heading"><div><span class="chart-symbol">SPX</span><h3 id="spx-chart-title">S&amp;P 500 指數</h3></div><span id="chart-spx-badge" class="pill neutral-pill">讀取中</span></div><div id="chart-spx" class="price-chart-content" aria-live="polite"><div class="chart-loading">正在讀取圖表資料…</div></div><div class="chart-links"><a href="https://finance.yahoo.com/quote/%5EGSPC/" target="_blank" rel="noopener noreferrer">Yahoo Finance · SPX ↗</a><span>獨立來源，唔讀入本頁</span></div></article>
         <article class="panel price-chart-card" aria-labelledby="vix-chart-title"><div class="price-chart-heading"><div><span class="chart-symbol vix-symbol">VIX</span><h3 id="vix-chart-title">Cboe 波幅指數</h3></div><span id="chart-vix-badge" class="pill neutral-pill">讀取中</span></div><div id="chart-vix" class="price-chart-content" aria-live="polite"><div class="chart-loading">正在讀取圖表資料…</div></div><div class="chart-links"><a href="https://finance.yahoo.com/quote/%5EVIX/" target="_blank" rel="noopener noreferrer">Yahoo Finance · VIX ↗</a><span>獨立來源，唔讀入本頁</span></div></article>
       </div>
-      <div class="chart-section-foot"><p id="charts-source-note">圖表來源與時間會喺載入後顯示。缺資料唔會補造曲線。</p><button type="button" id="chart-provider-toggle" class="text-button" hidden>停用第三方圖表</button></div>
+      <div class="chart-section-foot"><p id="charts-source-note">圖表來源與時間會喺載入後顯示。缺資料唔會補造曲線。</p></div>
       <a class="chart-next-step" href="#quote-candidates"><span>下一步</span>核對 short / long put 報價，再建立紙倉 <strong aria-hidden="true">↓</strong></a>
       <noscript><p class="micro-note">JavaScript 未啟用。可使用上面嘅 Yahoo Finance 獨立連結查看 SPX / VIX；本頁冇靜態示範價格。</p></noscript>
     </section>
@@ -64,7 +64,7 @@
     <section id="market" class="anchor-section" aria-labelledby="market-title">
       <div class="section-heading"><div><span class="eyebrow">MARKET & ENTRY GATES</span><h2 id="market-title">市場與條件核對</h2></div><span id="market-badge" class="pill neutral-pill">未連接報價</span></div>
       <p class="section-intro">只展示狀態檔提供嘅資料；欠缺、過期或者未核實嘅項目，都會明確標示。</p>
-      <section class="panel third-party-panel" aria-labelledby="third-party-title"><div class="card-heading"><h3 id="third-party-title">市場參考帶 <span>Third-party display</span></h3><span class="pill neutral-pill">獨立顯示 · 可延遲</span></div><p>由 TradingView 提供 SPX / SPY / VIX 參考顯示，可能延遲。只供旁邊參考，永遠唔會讀入 gate 或 strike 計算器。</p><div class="third-party-actions"><button type="button" id="tv-load" class="secondary-button">按此載入 TradingView</button><a href="https://www.cboe.com/tradable-products/sp-500/xsp-options" target="_blank" rel="noopener noreferrer">XSP 官方資料 ↗</a></div><p id="tv-status" class="micro-note" aria-live="polite">參考帶未載入；呢個按鈕只控制參考帶。上方走勢圖可獨立載入 TradingView。</p><div id="tv-container" hidden></div><noscript><p class="micro-note">JavaScript 未啟用。可直接前往 <a href="https://www.tradingview.com/">TradingView</a> 睇市場參考。</p></noscript></section>
+      <section class="panel third-party-panel" aria-labelledby="third-party-title"><div class="card-heading"><h3 id="third-party-title">市場參考帶 <span>Third-party display</span></h3><span class="pill neutral-pill">獨立顯示 · 可延遲</span></div><p>由 TradingView 提供 SPY ETF 參考顯示，可能延遲。只供旁邊參考，永遠唔會讀入 gate 或 strike 計算器。</p><div class="third-party-actions"><button type="button" id="tv-load" class="secondary-button">按此載入 TradingView</button><a href="https://www.cboe.com/tradable-products/sp-500/xsp-options" target="_blank" rel="noopener noreferrer">XSP 官方資料 ↗</a></div><p id="tv-status" class="micro-note" aria-live="polite">參考帶未載入。SPX 同 VIX 請使用首頁上方原圖連結。</p><div id="tv-container" hidden></div><noscript><p class="micro-note">JavaScript 未啟用。可直接前往 <a href="https://www.tradingview.com/">TradingView</a> 睇市場參考。</p></noscript></section>
       <div id="market-cards" class="market-grid" aria-live="polite"></div>
       <div class="two-column">
         <section class="panel gates-panel" aria-labelledby="gates-title"><div class="card-heading"><h3 id="gates-title">Entry gates <span>條件證據</span></h3><label class="select-label" for="gate-symbol">標的<select id="gate-symbol"><option value="SPY">SPY</option><option value="XSP">XSP</option></select></label></div><ul id="gate-list" class="gate-list"></ul><p class="micro-note">條件核對唔等於入場訊號。資料齊全亦唔代表市場可按報價成交。</p></section>
@@ -87,7 +87,7 @@
     <section id="protocol" class="anchor-section" aria-labelledby="protocol-title">
       <div class="section-heading"><div><span class="eyebrow">STUDY PROTOCOL</span><h2 id="protocol-title">先鎖規則，再睇結果</h2></div></div>
       <div class="protocol-grid"><article class="panel protocol-card"><span class="protocol-number">01</span><h3>同一口徑</h3><p>每個版本沿用同一份資料、交易時點、費用同倉位口徑。比較 gate 時，只改指定條件。</p></article><article class="panel protocol-card"><span class="protocol-number">02</span><h3>時間先後</h3><p>每個決定只用當時可知嘅數據。SMA、事件日曆、delta 同成交報價都要核對 as-of 時間。</p></article><article class="panel protocol-card"><span class="protocol-number">03</span><h3>真實與模擬分開</h3><p>缺價唔當零。原始報價、模擬界限同模型 fair price 分開記錄；模型價格唔直接當成交價。</p></article><article class="panel protocol-card"><span class="protocol-number">04</span><h3>保留限制</h3><p>XSP 原 OOS mid/high 430 筆全屬 bull，未測到 transition。SPY 後段 gate 回放亦冇合資格 transition。</p></article></div>
-      <details class="method-details"><summary>計算與資料閱讀說明</summary><div><p><strong>Rule C：</strong>FOMC 當日唔開新倉；原定到期日如遇 FOMC、CPI 或 NFP，亦唔開倉。需用入場時已知嘅日曆，唔用事後標籤當即時已知。</p><p><strong>增量 Z：</strong>SPY gated transition mid/high 中 Z ≥ 3 嘅規則，在 2022–23 兩次離場相對 HOLD 增加 $228；後段 gate 回放冇合資格 transition。兩次觀察不足以證明普遍有效。</p><p><strong>到期價差風險：</strong>同到期、同張數 put credit spread 嘅模型最大虧損 = (short strike − long strike − credit) × 100。呢個唔係 broker margin engine，亦未包含美式指派造成嘅額外資金需求。</p><p><strong>狀態檔：</strong>市場、事件同候選合約分開標示 status / as-of。頁面唔補造報價；未連接資料時保留 unknown 狀態。TradingView 係獨立第三方顯示，可能延遲，唔係條件或模型數據來源。</p><p><strong>樣本比較：</strong>2022–23 同 2024–26 係兩段歷史觀察；未提供預註冊、外樣本同信賴區間前，唔視為已證明可持續嘅 edge。</p></div></details>
+      <details class="method-details"><summary>計算與資料閱讀說明</summary><div><p><strong>Rule C：</strong>FOMC 當日唔開新倉；原定到期日如遇 FOMC、CPI 或 NFP，亦唔開倉。需用入場時已知嘅日曆，唔用事後標籤當即時已知。</p><p><strong>增量 Z：</strong>SPY gated transition mid/high 中 Z ≥ 3 嘅規則，在 2022–23 兩次離場相對 HOLD 增加 $228；後段 gate 回放冇合資格 transition。兩次觀察不足以證明普遍有效。</p><p><strong>到期價差風險：</strong>同到期、同張數 put credit spread 嘅模型最大虧損 = (short strike − long strike − credit) × 100。呢個唔係 broker margin engine，亦未包含美式指派造成嘅額外資金需求。</p><p><strong>狀態檔：</strong>市場、事件同候選合約分開標示 status / as-of。頁面唔補造報價；未連接資料時保留 unknown 狀態。TradingView 嘅 SPY 參考帶可能延遲，唔係條件或模型數據來源。</p><p><strong>樣本比較：</strong>2022–23 同 2024–26 係兩段歷史觀察；未提供預註冊、外樣本同信賴區間前，唔視為已證明可持續嘅 edge。</p></div></details>
     </section>
     <footer><span>SPS RESEARCH DESK</span><p>公開研究摘要 · 歷史表現唔保證未來結果</p><a href="#market-charts">返回頂部 ↑</a></footer>
   </main>
