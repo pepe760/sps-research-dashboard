@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "checked_at": "2026-11-18T02:17:58Z",
+  "market": {
+    "status": "unconfigured",
+    "as_of": null,
+    "source": null,
+    "instruments": {}
+  },
+  "events": {
+    "status": "partial",
+    "checked_at": "2026-11-18T02:17:58.569717Z",
+    "covered_through": "2026-12-04",
+    "sources": [
+      {
+        "source_url": "https://www.bls.gov/schedule/news_release/bls.ics",
+        "sha256": "92a350111ace106deaab5584e4084366bd367b594a0d0bad116008d82d63e501",
+        "status": "limited"
+      },
+      {
+        "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+        "sha256": "83710243e34fafbccd1f1fa04966f6c877cc1a0cd125250e5c2547f4c19123c7",
+        "status": "ok"
+      }
+    ],
+    "items": [
+      {
+        "date": "2026-12-04",
+        "time_et": "08:30",
+        "type": "NFP",
+        "title": "Employment Situation",
+        "source_url": "https://www.bls.gov/schedule/news_release/bls.ics"
+      },
+      {
+        "date": "2026-12-09",
+        "time_et": null,
+        "type": "FOMC",
+        "title": "FOMC final meeting day (December 8-9*)",
+        "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+      },
+      {
+        "date": "2026-12-10",
+        "time_et": "08:30",
+        "type": "CPI",
+        "title": "Consumer Price Index",
+        "source_url": "https://www.bls.gov/schedule/news_release/bls.ics"
+      }
+    ]
+  },
+  "candidates": {
+    "status": "unconfigured",
+    "as_of": null,
+    "items": []
+  }
+}

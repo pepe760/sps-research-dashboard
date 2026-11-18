@@ -1,0 +1,52 @@
+name: Hourly public dashboard
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sps-github-pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/configure-pages@v5
+      - name: Check data and build the public snapshot
+        env:
+          SPS_PREVIOUS_SNAPSHOT: https://pepe760.github.io/sps-research-dashboard/data/status.json
+          SPS_PUBLIC_FEED_APPROVED: ${{ vars.SPS_PUBLIC_FEED_APPROVED }}
+          SPS_PUBLIC_FEED_LABEL: ${{ vars.SPS_PUBLIC_FEED_LABEL }}
+          SPS_PUBLIC_FEED_URL: ${{ secrets.SPS_PUBLIC_FEED_URL }}
+          SPS_PUBLIC_FEED_TOKEN: ${{ secrets.SPS_PUBLIC_FEED_TOKEN }}
+        run: |
+          python -m unittest discover -s scripts/tests
+          python scripts/refresh.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.publish.outputs.page_url }}
+    steps:
+      - name: Deploy to Pages
+        id: publish
+        uses: actions/deploy-pages@v4
