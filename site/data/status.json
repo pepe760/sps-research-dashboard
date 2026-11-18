@@ -1,6 +1,16 @@
 {
   "schema_version": 1,
-  "checked_at": "2026-11-18T02:34:49Z",
+  "checked_at": "2026-11-18T03:01:08Z",
+  "sources": {
+    "market": {
+      "status": "unconfigured",
+      "label": null
+    },
+    "options": {
+      "status": "unconfigured",
+      "label": null
+    }
+  },
   "market": {
     "status": "unconfigured",
     "as_of": null,
@@ -16,7 +26,7 @@
   },
   "events": {
     "status": "partial",
-    "checked_at": "2026-11-18T02:34:49.005999Z",
+    "checked_at": "2026-11-18T03:01:08.245294Z",
     "covered_through": "2026-12-04",
     "sources": [
       {
@@ -26,7 +36,7 @@
       },
       {
         "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-        "sha256": "e1a3f5835463a376a6613981aea58aca0d0fe0e5244a5ae74685a30f0038fbbe",
+        "sha256": "f216e0a6674dc87ec011ff94a2c113348c471642eb5afbf685f43acf000eb8c6",
         "status": "ok"
       }
     ],
@@ -57,6 +67,7 @@
   "candidates": {
     "status": "unconfigured",
     "as_of": null,
+    "source": null,
     "items": []
   }
 }

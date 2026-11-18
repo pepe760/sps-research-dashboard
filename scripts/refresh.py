@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import argparse
 import json
 import os
+import re
 import tempfile
 
 from events import fetch_events
@@ -212,15 +213,24 @@ def select_chain(symbol,i):
             "short_bid":quoted[short][0],"short_ask":quoted[short][1],"long_bid":quoted[long][0],"long_ask":quoted[long][1]}
 
 
-def environment_feed():
-    if os.getenv("SPS_PUBLIC_FEED_APPROVED","").strip().lower()!="true":
-        return None
-    url=os.getenv("SPS_PUBLIC_FEED_URL","")
+def enabled(name):
+    return os.getenv(name, "").strip().lower() == "true"
+
+
+def private_marker(value):
+    return bool(re.search(r"\b(?:ibkr|interactive\s*brokers|private|personal)\b", str(value), re.I))
+
+
+def fetch_public_feed(prefix, *, require_distribution=False):
+    """Read only a source deliberately configured for public redistribution."""
+    url=os.getenv(prefix+"_URL", "").strip()
     p=urlsplit(url)
     if p.scheme!="https" or not p.hostname or p.username or p.password or p.fragment:
         raise ValueError("feed URL must be HTTPS without embedded credentials")
+    if private_marker(os.getenv(prefix+"_LABEL", "")):
+        raise ValueError("private brokerage feed not eligible for public output")
     headers={"Accept":"application/json","User-Agent":"SPS-Public-Research/1.0"}
-    token=os.getenv("SPS_PUBLIC_FEED_TOKEN")
+    token=os.getenv(prefix+"_TOKEN")
     if token:
         headers["Authorization"]="Bearer "+token
     with build_opener(NoRedirect()).open(Request(url,headers=headers),timeout=18) as f:
@@ -230,7 +240,42 @@ def environment_feed():
     payload=json.loads(b)
     if not isinstance(payload,dict):
         raise ValueError("feed must be a JSON object")
+    if payload.get("private") is True or any(private_marker(payload.get(k, "")) for k in ("source", "provider", "distribution", "visibility", "scope")):
+        raise ValueError("explicit private or brokerage payload rejected")
+    if require_distribution and payload.get("distribution") != "public":
+        raise ValueError("dedicated public feeds must declare distribution public")
     return payload
+
+
+def environment_feed():
+    """Original combined feed entry point."""
+    return fetch_public_feed("SPS_PUBLIC_FEED") if enabled("SPS_PUBLIC_FEED_APPROVED") else None
+
+
+def environment_lanes():
+    """Fetch independently approved lanes, at most one request per endpoint configuration."""
+    specs={"market":("instruments","history"),"options":("entries","chains")}
+    result={}
+    cache={}
+    for lane, keys in specs.items():
+        explicit="SPS_PUBLIC_"+lane.upper()
+        dedicated=any(os.getenv(explicit+"_"+k, "").strip() for k in ("APPROVED","URL","LABEL","TOKEN"))
+        prefix=explicit if dedicated else "SPS_PUBLIC_FEED"
+        approved=enabled(prefix+"_APPROVED")
+        if not approved:
+            result[lane]={"status":"unconfigured","feed":None,"source":None}
+            continue
+        if prefix not in cache:
+            try:
+                cache[prefix]=fetch_public_feed(prefix,require_distribution=dedicated)
+            except Exception:
+                # Never emit an upstream URL, private response body, credential, or traceback.
+                cache[prefix]=None
+        data=cache[prefix]
+        result[lane]={"status":"connected" if data is not None else "unavailable",
+                      "feed":{k:data[k] for k in keys if k in data} if data is not None else None,
+                      "source":os.getenv(prefix+"_LABEL") if data is not None else None}
+    return result
 
 
 def prior():
@@ -291,30 +336,48 @@ def sanitized_events(x):
     return out
 
 
-def snapshot(now, events, feed=None, *, configured=False, previous=None, source=None, history_approved=False):
+def snapshot(now, events, feed=None, *, configured=False, previous=None, source=None, history_approved=False, lanes=None):
     ev=sanitized_events(events)
     old=sanitized_events(object_or_empty(previous).get("events"))
     if ev["status"]!="available" and not ev.get("covered_through") and old["status"] in ("available","partial","stale") and old["items"]:
         ev={"status":"stale","checked_at":ev.get("checked_at"),"data_as_of":old.get("data_as_of") or old.get("checked_at"),"items":old["items"]}
+    if lanes is None:
+        # Preserve the combined-feed call convention for existing integrations.
+        status="unconfigured" if not configured else "unavailable" if feed is None else "connected"
+        lanes={name:{"status":status,"feed":feed if configured else None,"source":source} for name in ("market","options")}
+    market_lane,options_lane=(lanes[name] for name in ("market","options"))
+    market_feed,options_feed=(lane["feed"] for lane in (market_lane,options_lane))
     market,candidates={},[]
-    if configured and feed is not None:
-        items=object_or_empty(feed.get("instruments"))
+    if market_feed is not None:
+        items=object_or_empty(market_feed.get("instruments"))
         for s in SYMBOLS:
             if x:=instrument(object_or_empty(items.get(s)),now):
                 market[s]=x
-        each=object_or_empty(feed.get("entries"))
-        chains=object_or_empty(feed.get("chains"))
+    if options_feed is not None:
+        each=object_or_empty(options_feed.get("entries"))
+        chains=object_or_empty(options_feed.get("chains"))
         for s in ("SPY","XSP"):
             proposal=select_chain(s,object_or_empty(chains[s])) if s in chains else object_or_empty(each.get(s))
             if c:=candidate(s,proposal,market,ev,now):
                 candidates.append(c)
-    m_status="available" if market else "stale" if configured else "unconfigured"
-    c_status="available" if candidates else "unavailable" if configured else "unconfigured"
+    if market:
+        m_status="available"
+    elif market_lane["status"]=="unconfigured":
+        m_status="unconfigured"
+    elif object_or_empty(object_or_empty(market_feed).get("instruments")):
+        m_status="stale"
+    else:
+        m_status="unavailable"
+    c_status="available" if candidates else "unconfigured" if options_lane["status"]=="unconfigured" else "unavailable"
+    def stated_source(lane):
+        return str(lane["source"])[:80] if lane["source"] and lane["status"]=="connected" else None
     return {"schema_version":1,"checked_at":iso(now),
+            "sources":{name:{"status":lane["status"],"label":stated_source(lane)} for name,lane in lanes.items()},
             "market":{"status":m_status,"as_of":max((r["as_of"] for r in market.values()),default=None),
-                      "source":str(source)[:80] if market and source else None,"instruments":market},
-            "charts":chart_snapshot(feed,now,configured and history_approved,source),
-            "events":ev,"candidates":{"status":c_status,"as_of":max((r["as_of"] for r in candidates),default=None),"items":candidates}}
+                      "source":stated_source(market_lane) if market else None,"instruments":market},
+            "charts":chart_snapshot(market_feed,now,market_lane["status"]!="unconfigured" and history_approved,stated_source(market_lane)),
+            "events":ev,"candidates":{"status":c_status,"as_of":max((r["as_of"] for r in candidates),default=None),
+                                     "source":stated_source(options_lane) if candidates else None,"items":candidates}}
 
 
 def main():
@@ -326,22 +389,15 @@ def main():
         events=fetch_events(as_of=now)
     except Exception:
         events={"status":"unavailable","checked_at":iso(now),"items":[]}
-    configured=os.getenv("SPS_PUBLIC_FEED_APPROVED","").strip().lower()=="true"
-    try:
-        data=environment_feed()
-    except Exception:
-        # No credentials, body, URL, or traceback published on lookup failure.
-        print("Numerical feed unavailable; publishing without live candidates.")
-        data=None
+    lanes=environment_lanes()
     previous=prior() if events.get("status")!="available" else None
-    public=snapshot(now,events,data,configured=configured,previous=previous,source=os.getenv("SPS_PUBLIC_FEED_LABEL"),
-                    history_approved=os.getenv("SPS_PUBLIC_HISTORY_APPROVED","").strip().lower()=="true")
+    public=snapshot(now,events,previous=previous,history_approved=enabled("SPS_PUBLIC_HISTORY_APPROVED"),lanes=lanes)
     v.output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=v.output.parent,delete=False) as f:
         json.dump(public,f,ensure_ascii=False,indent=2,allow_nan=False)
         f.write("\n")
     Path(f.name).replace(v.output)
-    print(f'Calendar: {public["events"]["status"]}; market: {public["market"]["status"]}; candidates: {len(public["candidates"]["items"])}')
+    print(f'Calendar: {public["events"]["status"]}; market: {public["market"]["status"]}; charts: {public["charts"]["status"]}; options source: {public["sources"]["options"]["status"]}; candidates: {len(public["candidates"]["items"])}')
 
 
 if __name__=="__main__":

@@ -4,6 +4,15 @@ The public site works without this adapter. An optional TradingView embed stays 
 
 Only enable a numerical feed after the vendor has authorized both the public web display and the public-download use of the saved derived fields. Use an HTTPS endpoint controlled by the operator, with optional bearer auth in GitHub Secrets. Do not pass a brokerage account, use an undocumented portal endpoint, or publish the secret. The public output exposes only the allowlisted fields in `data/status.json`; it never copies the input chain.
 
+## Independent source setup
+
+| Public lane | GitHub Actions Variables | GitHub Actions Secrets | Payload |
+| --- | --- | --- | --- |
+| Market and daily charts | `SPS_PUBLIC_MARKET_APPROVED=true`, optional `SPS_PUBLIC_MARKET_LABEL`, `SPS_PUBLIC_HISTORY_APPROVED=true` only if daily distribution is also authorized | `SPS_PUBLIC_MARKET_URL`, optional `SPS_PUBLIC_MARKET_TOKEN` | `distribution: "public"`, `instruments` and/or `history` |
+| SPY/XSP option candidates | `SPS_PUBLIC_OPTIONS_APPROVED=true`, optional `SPS_PUBLIC_OPTIONS_LABEL` | `SPS_PUBLIC_OPTIONS_URL`, optional `SPS_PUBLIC_OPTIONS_TOKEN` | `distribution: "public"`, `entries` and/or `chains` |
+
+Set only the approved lane; the other lane can remain disconnected or use its own authorized vendor. Each lane reads only its listed fields, even when an adapter returns extra data. Configure `SPS_PUBLIC_FEED_APPROVED`, `SPS_PUBLIC_FEED_LABEL`, `SPS_PUBLIC_FEED_URL`, and optional `SPS_PUBLIC_FEED_TOKEN` for the legacy combined adapter. A dedicated setting takes precedence for that lane; an unapproved or failing dedicated feed does not silently fall back to the combined feed. Both source states are reported in `sources` (`connected`, `unavailable`, or `unconfigured`). A connected endpoint is not proof of fresh or complete data; the market, chart and candidate sections report their own status and timestamps. A broker/private-marked input is rejected, and the deployed artifacts are explicitly allowlisted. The distribution field is an adapter assertion, not a substitute for checking the vendor agreement.
+
 ## Server response
 
 - `instruments` object with keys SPY, SPX, XSP, VIX (any subset). Each object has positive `spot`, timezone-qualified ISO `as_of`, and optionally `prior_close`, `sma200`, and `high252_close`. Prior statistics must be available before the session and use the previous completed regular session. To calculate the live gate, provide both SPY and SPX cash checks; the XSP entry uses SPX.
@@ -15,7 +24,7 @@ Pages serves public artifacts and cannot protect vendor data at the browser laye
 
 ## Daily charts
 
-To allow public SPX/VIX daily charts, separately set `SPS_PUBLIC_HISTORY_APPROVED=true` after obtaining permission to publish both the daily close series and moving averages. Supply `history.SPX` and `history.VIX` objects, each with an ISO `as_of` and `bars: [{date, close, complete?}]`. All bars must be completed regular US daily closes. For a same-day bar, set `complete:true`; nothing can enter a same-day daily bar before 16:15 ET. Use approximately 280–300 trading sessions so SMA200 has a full lookback for the entire visible 3-month window. Only the recent 100 calendar days and their computed 20/50/200-session averages are published. A fresh check is not a fresh market closing bar. If data is unavailable, the page links to the native index charts on their source websites. Neither cash index is substituted with an ETF, futures contract or CFD.
+To allow public SPX/VIX daily charts, separately set `SPS_PUBLIC_HISTORY_APPROVED=true` after obtaining permission to publish both the daily close series and moving averages. The market lane can operate without an options feed. Supply `history.SPX` and `history.VIX` objects, each with an ISO `as_of` and `bars: [{date, close, complete?}]`. All bars must be completed regular US daily closes. For a same-day bar, set `complete:true`; nothing can enter a same-day daily bar before 16:15 ET. Use approximately 280–300 trading sessions so SMA200 has a full lookback for the entire visible 3-month window. Only the recent 100 calendar days and their computed 20/50/200-session averages are published. A fresh check is not a fresh market closing bar. If data is unavailable, the page links to the native index charts on their source websites. Neither cash index is substituted with an ETF, futures contract or CFD.
 
 ## Optional automatic pairing
 

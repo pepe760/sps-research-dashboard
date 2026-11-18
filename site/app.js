@@ -137,15 +137,22 @@
 
   function renderCandidates() {
     const candidates = state.data?.candidates;
+    const optionsSource = state.data?.sources?.options;
     const candidateStatus = effectiveStatus(candidates, 90);
     setBadge($("candidate-badge"), candidateStatus);
     const box = $("candidates-content");
     box.replaceChildren();
     const items = Array.isArray(candidates?.items) ? candidates.items : [];
     if (!items.length) {
-      box.append(empty("未連接 option chain", "請喺已授權報價來源核對。下面嘅 strike 計算器只係模型示範。"));
+      const info = optionsSource?.status === "connected"
+        ? ["有資料來源，暫未有合資格組合", "未收到符合時間、到期日、delta 同兩腿報價規則嘅候選。"]
+        : optionsSource?.status === "unavailable"
+          ? ["期權來源暫時讀唔到", "無可核對盤口，不提供自動 strike 或 credit。"]
+          : ["未連接公開期權來源", "請喺已授權報價來源核對；可喺下方用手動盤口做紙上記錄。"];
+      box.append(empty(...info));
       return;
     }
+    if (candidates.source) box.append(el("p", "micro-note", "期權來源：" + candidates.source));
     if (candidateStatus !== "available") box.append(el("p", "candidate-warning", "以下為未驗證／過期嘅參考記錄，唔代表現時可交易。"));
     const wrap = el("div", "table-wrap");
     const table = el("table", "candidate-table");
@@ -294,14 +301,16 @@
     source.href = "https://www.tradingview.com/symbols/" + ref + "/";
     source.target = "_blank";
     source.rel = "noopener noreferrer";
-    const panel = empty("未有可公開顯示嘅指數圖", "原生指數可喺來源網站查看。接駁獲授權收市數據後，呢度會顯示 1M／3M 同 SMA。");
+    const marketStatus = state.data?.sources?.market?.status;
+    const title = marketStatus === "connected" ? "未有合資格嘅指數日線" : marketStatus === "unavailable" ? "指數來源暫時讀唔到" : "未有可公開顯示嘅指數圖";
+    const panel = empty(title, "原生指數可喺來源網站查看。接駁獲授權收市數據後，呢度會顯示 1M／3M 同 SMA。");
     panel.append(source);
     host.replaceChildren(panel);
   }
 
   function renderCharts() {
     const charts = state.data?.charts;
-    const key = JSON.stringify([charts || null, state.chartRange]);
+    const key = JSON.stringify([charts || null, state.data?.sources?.market?.status ?? null, state.chartRange]);
     if (state.chartsKey === key) return;
     state.chartsKey = key;
     let fallbacks = 0;

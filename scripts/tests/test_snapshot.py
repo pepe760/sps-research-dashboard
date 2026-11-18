@@ -1,8 +1,9 @@
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import refresh as r
@@ -93,6 +94,57 @@ class TestSnapshot(unittest.TestCase):
         self.assertEqual((last["close"],last["sma20"],last["sma50"],last["sma200"]),(379.,369.5,354.5,279.5))
         self.assertIsNotNone(out["series"]["SPX"][0]["sma200"])
         self.assertLess(len(out["series"]["SPX"]),80)
+
+    def test_split_market_approval_does_not_publish_options(self):
+        env={"SPS_PUBLIC_MARKET_APPROVED":"true","SPS_PUBLIC_MARKET_URL":"https://market.example.com/quotes",
+             "SPS_PUBLIC_MARKET_LABEL":"Index Vendor"}
+        with patch.dict("os.environ",env,clear=True), patch.object(r,"fetch_public_feed",return_value=FEED) as pull:
+            lanes=r.environment_lanes()
+        pull.assert_called_once_with("SPS_PUBLIC_MARKET",require_distribution=True)
+        self.assertNotIn("entries",lanes["market"]["feed"])
+        got=r.snapshot(NOW,events(),lanes=lanes,history_approved=True)
+        self.assertEqual(got["sources"]["market"],{"status":"connected","label":"Index Vendor"})
+        self.assertEqual(got["market"]["instruments"]["SPX"]["spot"],7350)
+        self.assertEqual(got["candidates"]["status"],"unconfigured")
+
+    def test_market_outage_does_not_discard_approved_options(self):
+        def pull(prefix, **unused):
+            if prefix=="SPS_PUBLIC_MARKET":
+                raise OSError("fake URL or token must be omitted")
+            return FEED
+        with patch.dict("os.environ",{"SPS_PUBLIC_MARKET_APPROVED":"true","SPS_PUBLIC_OPTIONS_APPROVED":"true",
+            "SPS_PUBLIC_OPTIONS_LABEL":"Option Vendor"},clear=True), patch.object(r,"fetch_public_feed",side_effect=pull):
+            lanes=r.environment_lanes()
+        self.assertNotIn("instruments",lanes["options"]["feed"])
+        got=r.snapshot(NOW,events(),lanes=lanes,history_approved=True)
+        self.assertEqual((got["market"]["status"],got["charts"]["status"]),("unavailable","unavailable"))
+        self.assertEqual(got["candidates"]["source"],"Option Vendor")
+        item,=got["candidates"]["items"]
+        self.assertEqual((item["credit"],item["gate"]),(.21,"unknown"))
+        self.assertNotIn("fake URL",str(got))
+
+    def test_legacy_one_request_and_explicit_disable_blocks_fallback(self):
+        with patch.dict("os.environ",{"SPS_PUBLIC_FEED_APPROVED":"true"},clear=True), patch.object(r,"fetch_public_feed",return_value=FEED) as pull:
+            lanes=r.environment_lanes()
+            pull.assert_called_once_with("SPS_PUBLIC_FEED",require_distribution=False)
+            self.assertEqual(set(lanes["market"]["feed"]),{"instruments"})
+            self.assertEqual(set(lanes["options"]["feed"]),{"entries"})
+        disabled={"SPS_PUBLIC_FEED_APPROVED":"true","SPS_PUBLIC_OPTIONS_APPROVED":"false"}
+        with patch.dict("os.environ",disabled,clear=True), patch.object(r,"fetch_public_feed",return_value=FEED):
+            self.assertEqual(r.environment_lanes()["options"]["status"],"unconfigured")
+
+    def test_public_ingress_rejects_unmarked_dedicated_and_private_broker_payload(self):
+        opener=MagicMock()
+        reply=opener.open.return_value.__enter__.return_value
+        env={"SPS_PUBLIC_MARKET_APPROVED":"true","SPS_PUBLIC_MARKET_URL":"https://market.example.com/data"}
+        with patch.dict("os.environ",env,clear=True), patch.object(r,"build_opener",return_value=opener):
+            for marks in ({},{"distribution":"public","source":"IBKR TWS"},
+                          {"distribution":"private"},{"distribution":"public","private":True}):
+                reply.read.return_value=json.dumps({**FEED,**marks}).encode()
+                result=r.environment_lanes()["market"]
+                self.assertEqual(result,{"status":"unavailable","feed":None,"source":None})
+            reply.read.return_value=json.dumps({**FEED,"distribution":"public"}).encode()
+            self.assertEqual(r.environment_lanes()["market"]["status"],"connected")
 
 
 if __name__=="__main__":
