@@ -5,9 +5,16 @@
   const STATUS_URL = "./data/status.json";
   const SYMBOLS = ["SPY", "XSP", "SPX", "VIX"];
   const LABELS = { SPY: "ETF OPTIONS", XSP: "MINI INDEX", SPX: "INDEX REFERENCE", VIX: "VOLATILITY INDEX" };
+  const WATCHLIST_SYMBOLS = {
+    SPY: { name: "S&P 500 ETF", unit: "USD", link: "https://finance.yahoo.com/quote/SPY/chart/", linkLabel: "SPY 走勢" },
+    SPX: { name: "S&P 500 指數", unit: "點", link: "#chart-spx-title", linkLabel: "SPX 圖表" },
+    VIX: { name: "Cboe 波幅指數", unit: "點", link: "#chart-vix-title", linkLabel: "VIX 圖表" },
+    XSP: { name: "Mini-SPX 指數", unit: "點", link: "https://www.cboe.com/delayed_quotes/xsp/quote_table", linkLabel: "Cboe 行情" },
+  };
   const state = { data: null, chartRange: "1M", chartsKey: null };
   const money = (n, digits = 2) => new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
   const finite = (v) => typeof v === "number" && Number.isFinite(v);
+  const marketTime = new Intl.DateTimeFormat("zh-HK", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   const GATE_LABELS = { passes: "條件已通過", blocked_sma200: "SMA200 阻擋", blocked_event: "事件日阻擋", unknown: "資料未齊／未知" };
 
   function freshTimestamp(value, minutes) {
@@ -44,6 +51,82 @@
     const box = el("div", "empty-block");
     box.append(el("strong", "", title), el("span", "", text));
     return box;
+  }
+
+  function watchlistTime(value) {
+    const time = typeof value === "string" && /T.*(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : NaN;
+    if (!Number.isFinite(time)) return null;
+    const label = el("time", "", marketTime.format(time) + " HKT");
+    label.dateTime = value;
+    return label;
+  }
+
+  function watchlistRowData(symbol) {
+    const market = state.data?.market;
+    const instrument = market?.instruments?.[symbol];
+    const watchlist = state.data?.watchlist;
+    const upstream = Array.isArray(watchlist?.items) ? watchlist.items.find((row) => row?.symbol === symbol && finite(row.value) && row.value > 0) : null;
+    const direct = finite(instrument?.spot) && instrument.spot > 0 && watchlistTime(instrument.as_of);
+    const directFresh = direct && effectiveStatus(market, 90) === "available" && freshTimestamp(instrument.as_of, 90);
+    if (direct && (directFresh || !upstream)) return {
+      value: instrument.spot, observedAt: instrument.as_of, source: market.source || "已授權公開行情", current: directFresh,
+      label: directFresh ? "近期快照" : "過期快照",
+    };
+    if (!upstream) return null;
+    const current = upstream.fresh === true && freshTimestamp(upstream.observed_at, 90) && freshTimestamp(state.data?.checked_at, 120) && !["stale", "unavailable", "error"].includes(upstream.status);
+    return {
+      value: upstream.value, observedAt: upstream.observed_at, date: upstream.observed_date,
+      source: typeof upstream.source_label === "string" ? upstream.source_label : "公開 Watchlist",
+      current, label: current ? "已更新 · 參考價" : "舊快照",
+      note: typeof upstream.note === "string" ? upstream.note : null,
+    };
+  }
+
+  function renderWatchlist() {
+    const watchlist = state.data?.watchlist;
+    const rows = [];
+    let available = 0, fresh = 0;
+    for (const [symbol, spec] of Object.entries(WATCHLIST_SYMBOLS)) {
+      const data = watchlistRowData(symbol);
+      const row = el("tr");
+      const symbolCell = el("th", "watchlist-symbol", symbol);
+      symbolCell.scope = "row";
+      symbolCell.append(el("small", "", spec.name));
+      const priceCell = el("td", "watchlist-price", data ? (spec.unit === "USD" ? "$" : "") + money(data.value) : "—");
+      if (data && spec.unit !== "USD") priceCell.append(el("small", "watchlist-unit", spec.unit));
+      const timeCell = el("td", "watchlist-time");
+      const stamp = watchlistTime(data?.observedAt);
+      if (stamp) timeCell.append(stamp);
+      else if (typeof data?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
+        const date = el("time", "", data.date + " · 美國交易日");
+        date.dateTime = data.date;
+        timeCell.append(date);
+      } else timeCell.textContent = "—";
+      const sourceCell = el("td", "watchlist-source");
+      sourceCell.append(el("span", "pill " + (data ? (data.current ? "good-pill" : "warning-pill") : "neutral-pill"), data?.label || "未提供"));
+      if (data) {
+        available++;
+        if (data.current) fresh++;
+        sourceCell.append(el("small", "", data.source));
+        if (data.note) sourceCell.append(el("small", "watchlist-muted", data.note));
+      }
+      const linkCell = el("td");
+      const reference = {SPX:"#chart-spx-card",VIX:"#chart-vix-card"}[symbol];
+      const destination = reference || (symbol === "SPY" && validChartRows(watchlist?.spy_history?.series).length >= 2 ? "#chart-spy-card" : spec.link);
+      const link = el("a", "watchlist-chart-link", (reference ? "參考行情" : spec.linkLabel) + (destination.startsWith("#") ? " ↓" : " ↗"));
+      link.href = destination;
+      if (!destination.startsWith("#")) { link.target = "_blank"; link.rel = "noopener noreferrer"; }
+      linkCell.append(link);
+      row.append(symbolCell, priceCell, timeCell, sourceCell, linkCell);
+      rows.push(row);
+    }
+    $("watchlist-rows").replaceChildren(...rows);
+    setBadge($("watchlist-badge"), fresh === rows.length ? "available" : fresh ? "partial" : available ? "stale" : "unavailable");
+    const note = $("watchlist-note");
+    const checked = watchlistTime(watchlist?.checked_at || state.data?.checked_at);
+    const base = !state.data ? "暫時讀唔到狀態檔。可直接睇市場來源。" : "只供市場參考，同期權盤口分開；缺價留空。";
+    note.replaceChildren(document.createTextNode(base));
+    if (checked) note.append(document.createTextNode(" 上次核對："), checked, document.createTextNode("。"));
   }
 
   function renderMarket() {
@@ -194,6 +277,7 @@
       $("updated-at").textContent = "冇補造價格；模型可手動使用。";
       $("global-dot").className = "status-dot warning";
     }
+    renderWatchlist();
     renderMarket();
     renderEvents();
     renderCandidates();
@@ -225,7 +309,9 @@
     const rows = allRows.filter((row) => Date.parse(row.date + "T00:00:00Z") >= cutoff);
     host.replaceChildren();
     if (rows.length < 2) { host.append(empty("呢段期間數據不足", "需要至少兩個已核實收市點；唔會補造走勢。")); return; }
-    const fields = symbol === "SPX" ? [["close", "收市", "close"], ["sma20", "SMA20", "sma20"], ["sma50", "SMA50", "sma50"], ["sma200", "SMA200", "sma200"]] : [["close", "收市", "close vix-close"], ["sma20", "SMA20", "sma20"], ["sma50", "SMA50", "sma50"]];
+    const priceLabel = symbol === "SPY" ? "調整後收市" : "收市";
+    const fields = [["close", priceLabel, symbol === "VIX" ? "close vix-close" : "close"], ["sma20", "SMA20", "sma20"], ["sma50", "SMA50", "sma50"]];
+    if (symbol !== "VIX") fields.push(["sma200", "SMA200", "sma200"]);
     const first = rows[0], last = rows.at(-1);
     const percent = (last.close / first.close - 1) * 100;
     const summary = el("div", "chart-number-line");
@@ -247,8 +333,8 @@
     const x = (index) => left + index / (rows.length - 1) * (width - left - right);
     const y = (value) => top + (hi - value) / (hi - lo) * (height - top - bottom);
     const svg = svgNode("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-labelledby": `${symbol}-plot-title ${symbol}-plot-desc`, class: "first-party-chart" });
-    svg.append(svgNode("title", { id: symbol + "-plot-title" }, symbol + " " + state.chartRange + " 每日收市及均線"));
-    svg.append(svgNode("desc", { id: symbol + "-plot-desc" }, `由 ${first.date} 至 ${last.date}，收市由 ${money(first.close)} 至 ${money(last.close)}。均線只顯示資料提供嘅值；下方可展開逐日數值。`));
+    svg.append(svgNode("title", { id: symbol + "-plot-title" }, symbol + " " + state.chartRange + " 每日" + priceLabel + "及均線"));
+    svg.append(svgNode("desc", { id: symbol + "-plot-desc" }, `由 ${first.date} 至 ${last.date}，${priceLabel}由 ${money(first.close)} 至 ${money(last.close)}。均線只顯示資料提供嘅值；下方可展開逐日數值。`));
     for (let i = 0; i < 5; i++) {
       const value = lo + (hi - lo) * i / 4, yy = y(value);
       svg.append(svgNode("line", { x1: left, y1: yy, x2: width - right, y2: yy, class: "chart-grid-line" }), svgNode("text", { x: left - 9, y: yy + 3, "text-anchor": "end", class: "chart-axis-text" }, money(value, symbol === "SPX" ? 0 : 1)));
@@ -296,23 +382,46 @@
 
   function renderSourceLinks(symbol) {
     const host = $("chart-" + symbol.toLowerCase());
+    if (host.querySelector(".reference-provider")) return;
     const ref = symbol === "SPX" ? "SP-SPX" : "CBOE-VIX";
     const source = el("a", "secondary-button source-chart-button", "去 TradingView 睇 " + symbol + " 原圖 ↗");
     source.href = "https://www.tradingview.com/symbols/" + ref + "/";
     source.target = "_blank";
     source.rel = "noopener noreferrer";
-    const marketStatus = state.data?.sources?.market?.status;
-    const title = marketStatus === "connected" ? "未有合資格嘅指數日線" : marketStatus === "unavailable" ? "指數來源暫時讀唔到" : "未有可公開顯示嘅指數圖";
-    const panel = empty(title, "原生指數可喺來源網站查看。接駁獲授權收市數據後，呢度會顯示 1M／3M 同 SMA。");
-    panel.append(source);
+    const widget = {
+      SPX: { url:"https://nowprice.io/embed/price/stocks/sp500", link:"https://nowprice.io/stocks/sp500", name:"NowPrice · S&P 500 報價卡", note:"第三方參考報價，可能延遲。"},
+      VIX: { url:"https://historyofmarket.com/embed/vix?lang=tw&theme=light", link:"https://historyofmarket.com/sp500/vix/", name:"History of Market · Cboe VIX", note:"第三方每日收市歷史圖，唔係即時報價。"}
+    }[symbol];
+    const panel = el("div","reference-provider");
+    const frame = document.createElement("iframe");
+    frame.title = widget.name;
+    frame.className = "reference-frame " + (symbol === "VIX" ? "reference-frame-tall" : "reference-frame-short");
+    frame.src = widget.url;
+    frame.loading = "lazy";
+    frame.referrerPolicy = "strict-origin-when-cross-origin";
+    const link = el("a","",widget.name + " ↗");
+    link.href = widget.link;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    const attribution = el("p","reference-attribution",widget.note + " 來源：");
+    attribution.append(link);
+    panel.append(frame, attribution, source);
     host.replaceChildren(panel);
   }
 
   function renderCharts() {
     const charts = state.data?.charts;
-    const key = JSON.stringify([charts || null, state.data?.sources?.market?.status ?? null, state.chartRange]);
+    const spyHistory = state.data?.watchlist?.spy_history;
+    const key = JSON.stringify([charts || null, spyHistory || null, state.data?.sources?.market?.status ?? null, state.chartRange]);
     if (state.chartsKey === key) return;
     state.chartsKey = key;
+    const spyRows = validChartRows(spyHistory?.series);
+    const showSpy = spyRows.length >= 2;
+    $("chart-spy-card").hidden = !showSpy;
+    if (showSpy) {
+      $("chart-spy-badge").textContent = (spyHistory.status === "stale" ? "保留舊日線 · 至 " : "ETF 日線 · 至 ") + spyRows.at(-1).date;
+      renderNumericChart("SPY", spyRows, { as_of: spyHistory.as_of, source: spyHistory.source_label || spyHistory.source || "公開 Watchlist" });
+    }
     let fallbacks = 0;
     for (const symbol of ["SPX", "VIX"]) {
       const rows = validChartRows(charts?.series?.[symbol]);
@@ -324,14 +433,14 @@
         renderNumericChart(symbol, rows, charts);
       } else {
         fallbacks++;
-        badge.textContent = "未接駁 · 可前往原圖";
+        badge.textContent = symbol === "VIX" ? "第三方 · 日線參考" : "第三方 · 可能延遲";
         badge.className = "pill neutral-pill";
         renderSourceLinks(symbol);
       }
     }
-    $("charts-source-note").textContent = fallbacks ? "未接駁嘅指數只提供原圖連結，唔用 CFD、期貨或者模擬價格替代。指數日線未公開前，1M／3M 切換暫停。" : "來源：" + (charts.source || "未提供") + " · " + (charts.as_of || "as-of 未提供") + "。SMA 使用已提供數值；缺值保留空白。";
+    $("charts-source-note").textContent = fallbacks ? "第三方嵌入只供參考，數字唔會寫入 DB 或用於策略。" + (showSpy ? "1M／3M 可切換已提供嘅 SPY ETF 日線。" : fallbacks === 2 ? "未有可畫嘅日線，1M／3M 暫停。" : "1M／3M 可切換已提供嘅日線。") : "指數來源：" + (charts.source || "未提供") + " · " + (charts.as_of || "as-of 未提供") + "。SMA 使用已提供數值；缺值保留空白。";
     document.querySelectorAll("[data-chart-range]").forEach((button) => {
-      button.disabled = fallbacks === 2;
+      button.disabled = fallbacks === 2 && !showSpy;
       button.setAttribute("aria-pressed", String(button.dataset.chartRange === state.chartRange));
     });
   }

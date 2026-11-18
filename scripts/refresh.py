@@ -12,6 +12,7 @@ import re
 import tempfile
 
 from events import fetch_events
+from watchlist import snapshot as watchlist_snapshot
 
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parents[1]
@@ -390,8 +391,9 @@ def main():
     except Exception:
         events={"status":"unavailable","checked_at":iso(now),"items":[]}
     lanes=environment_lanes()
-    previous=prior() if events.get("status")!="available" else None
+    previous=prior()  # previous official calendar and verified public Watchlist observations only
     public=snapshot(now,events,previous=previous,history_approved=enabled("SPS_PUBLIC_HISTORY_APPROVED"),lanes=lanes)
+    public["watchlist"]=watchlist_snapshot(now,previous=previous)
     v.output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=v.output.parent,delete=False) as f:
         json.dump(public,f,ensure_ascii=False,indent=2,allow_nan=False)

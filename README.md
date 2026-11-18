@@ -30,3 +30,7 @@ Historical numbers are aggregate quote replays. One spread per opportunity, appr
 ## Charts and paper tracking
 
 The homepage has SPX and VIX charts with one- and three-month views. Numeric daily bars, SMA20/50/200, and automatic option-pair figures require a permitted feed; TradingView embeds do not populate the JSON. The paper desk accepts user-entered bid/ask quotes and keeps any saved records in that browser only. Yahoo Finance is a direct-view link, not a pipeline; the linked data providers do not grant redistribution by default. See [real-time options and required permissions](FEED_SCHEMA.md#real-time-vendor-options).
+
+## Public Watchlist
+
+Open [the public Watchlist](https://pepe760.github.io/sps-research-dashboard/#watchlist) directly. It shares the previously published SPY data from the companion dashboard, with its exchange observation time, source and stale status, and shows vendor-adjusted SPY daily closes with SMA20/50/200. It does not substitute SPY for SPX or turn an ETF observation into an option spread quote.
