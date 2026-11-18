@@ -12,3 +12,25 @@ Only enable a numerical feed after the vendor has authorized both the public web
 - Data is stale once the individual observation is more than 90 minutes old. Missing/crossed quotes, wrong wing/delta, nonpositive credit, wrong clock/day, or no verified expiry produce no valid candidate. A known event blocks when FOMC falls on entry or when FOMC/CPI/NFP falls on expiry. Incomplete event inputs or missing prior statistics cannot generate a pass. Candidate terms are indicative and use two-leg natural quotes; risk estimate includes $2.80 per spread in model fees. A candidate published as a research observation is not a trade instruction.
 
 Pages serves public artifacts and cannot protect vendor data at the browser layer. Check the vendor's rules for derived data even if no raw chain is retained. For example, the [Cboe delayed quote webpage](https://www.cboe.com/delayed_quotes/api/) prohibits automated extraction; the optional [licensed Cboe DataShop API](https://datashop.cboe.com/cboe-all-access-api) has separate redistribution terms.
+
+## Daily charts
+
+To allow public SPX/VIX daily charts, separately set `SPS_PUBLIC_HISTORY_APPROVED=true` after obtaining permission to publish both the daily close series and moving averages. Supply `history.SPX` and `history.VIX` objects, each with an ISO `as_of` and `bars: [{date, close, complete?}]`. All bars must be completed regular US daily closes. For a same-day bar, set `complete:true`; nothing can enter a same-day daily bar before 16:15 ET. Use approximately 280–300 trading sessions so SMA200 has a full lookback for the entire visible 3-month window. Only the recent 100 calendar days and their computed 20/50/200-session averages are published. A fresh check is not a fresh market closing bar. If data is unavailable, the page falls back to the independently attributed TradingView embeds, whose data can be delayed and isn't passed to the tracker or strategy logic.
+
+## Optional automatic pairing
+
+Alternatively supply `chains.SPY` and/or `chains.XSP` with the same entry/expiry/clock metadata as `entries`, plus two arrays:
+
+- `selection_puts`: the frozen selection book (10:30 ET for SPY, 09:45 ET for XSP); each row is `{type:"put", expiry, strike, delta, bid, ask}`.
+- `quote_puts`: fresh quotes from the same verified expiry (`{type:"put", expiry, strike, bid, ask}`) at the provided `as_of` time. Use one coherent snapshot. It must be 10:45–16:00 ET to qualify under this tracker. A proper adapter is responsible for official session calendars and XSP’s contemporaneous chain/delta input. An hourly job cannot reconstruct a missed exact-time snapshot from a later quote; a provider must retain the original observation.
+
+The tracker chooses the short put closest to −0.10 from the frozen book (signed delta range −0.15 to −0.05; ties use higher bid then lower strike). It requires XSP’s exact 15-point wing and prefers an exact 15-point SPY wing (allowed fallback width 13–17). Update quotes are used only for the selected legs, not for chasing a different strike later. Missing or crossed quotes, ambiguous duplicate strikes and missing selected legs leave the candidate unavailable. The output includes the selected two legs' bid/ask only, estimated natural opening credit (short bid minus long ask), natural closing debit (short ask minus long bid), the as-of timestamp, and an indicative entry-gate result. No full chain is published.
+
+## Real-time vendor options
+
+- [ThetaData Commercial](https://www.thetadata.net/commercial-use): first option for continuity with the research source. Ask for real-time OPRA SPY and native XSP bid/ask, strike Greeks and timestamped snapshots, plus the separate SPX/VIX Cboe index service and daily history.
+- [Massive Options for Business](https://massive.com/business-options): ask for real-time OPRA bid/ask plus SPX/VIX index entitlements and confirmation that native XSP weeklies and Greeks are supported as requested. Quote timestamps and current SPY/XSP next-session expiries are required for the adapter.
+- [Cboe All Access API](https://datashop.cboe.com/cboe-all-access-api): ask for real-time Cboe index and OPRA options entitlements, daily SPX/VIX history, and permission for an anonymous public site with downloadable JSON.
+- [Yahoo Finance’s data-provider policy](https://help.yahoo.com/kb/SLN2310.html) does not grant public redistribution. The project has no Yahoo scrapers or unofficial Yahoo APIs. Yahoo links are for direct human viewing only.
+
+No vendor is activated by default. Request written confirmation for the intended delay/latency, every index and option class, public anonymous users, derived signals and downloadable history/JSON. Do not place a credential in site JavaScript, a git commit, or the public JSON.

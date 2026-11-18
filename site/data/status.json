@@ -1,15 +1,22 @@
 {
   "schema_version": 1,
-  "checked_at": "2026-11-18T02:17:58Z",
+  "checked_at": "2026-11-18T02:34:49Z",
   "market": {
     "status": "unconfigured",
     "as_of": null,
     "source": null,
     "instruments": {}
   },
+  "charts": {
+    "status": "unconfigured",
+    "source": null,
+    "as_of": null,
+    "series": {},
+    "last_close_dates": {}
+  },
   "events": {
     "status": "partial",
-    "checked_at": "2026-11-18T02:17:58.569717Z",
+    "checked_at": "2026-11-18T02:34:49.005999Z",
     "covered_through": "2026-12-04",
     "sources": [
       {
@@ -19,7 +26,7 @@
       },
       {
         "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-        "sha256": "83710243e34fafbccd1f1fa04966f6c877cc1a0cd125250e5c2547f4c19123c7",
+        "sha256": "e1a3f5835463a376a6613981aea58aca0d0fe0e5244a5ae74685a30f0038fbbe",
         "status": "ok"
       }
     ],

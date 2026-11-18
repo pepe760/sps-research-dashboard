@@ -28,6 +28,7 @@ jobs:
         env:
           SPS_PREVIOUS_SNAPSHOT: https://pepe760.github.io/sps-research-dashboard/data/status.json
           SPS_PUBLIC_FEED_APPROVED: ${{ vars.SPS_PUBLIC_FEED_APPROVED }}
+          SPS_PUBLIC_HISTORY_APPROVED: ${{ vars.SPS_PUBLIC_HISTORY_APPROVED }}
           SPS_PUBLIC_FEED_LABEL: ${{ vars.SPS_PUBLIC_FEED_LABEL }}
           SPS_PUBLIC_FEED_URL: ${{ secrets.SPS_PUBLIC_FEED_URL }}
           SPS_PUBLIC_FEED_TOKEN: ${{ secrets.SPS_PUBLIC_FEED_TOKEN }}

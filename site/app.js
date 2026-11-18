@@ -5,7 +5,8 @@
   const STATUS_URL = "./data/status.json";
   const SYMBOLS = ["SPY", "XSP", "SPX", "VIX"];
   const LABELS = { SPY: "ETF OPTIONS", XSP: "MINI INDEX", SPX: "INDEX REFERENCE", VIX: "VOLATILITY INDEX" };
-  const state = { data: null };
+  const state = { data: null, chartRange: "1M", chartsKey: null, providerDisabled: false };
+  try { state.providerDisabled = localStorage.getItem("sps-provider-charts-disabled") === "true"; } catch { /* Storage can be blocked. */ }
   const money = (n, digits = 2) => new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
   const finite = (v) => typeof v === "number" && Number.isFinite(v);
   const GATE_LABELS = { passes: "條件已通過", blocked_sma200: "SMA200 阻擋", blocked_event: "事件日阻擋", unknown: "資料未齊／未知" };
@@ -152,15 +153,16 @@
     table.append(el("caption", "sr-only", "狀態檔嘅候選合約報價"));
     const head = document.createElement("thead");
     const tr = document.createElement("tr");
-    ["標的", "到期", "Short / Long", "Delta", "Credit", "模型最大虧損", "as-of", "Gate 記錄"].forEach((text) => { const th = el("th", "", text); th.scope = "col"; tr.append(th); });
+    ["標的", "入場 / 到期", "Short strike", "Short bid / ask", "Long strike", "Long bid / ask", "Delta", "Credit", "自然平倉 debit", "Break-even", "模型最大虧損", "as-of", "Gate 記錄"].forEach((text) => { const th = el("th", "", text); th.scope = "col"; tr.append(th); });
     head.append(tr);
     table.append(head);
     const body = document.createElement("tbody");
     for (const item of items.slice(0, 30)) {
       const row = document.createElement("tr");
-      const strikes = finite(item.short_strike) && finite(item.long_strike) ? money(item.short_strike) + " / " + money(item.long_strike) : "未提供";
+      const price = (value) => finite(value) ? "$" + money(value) : "—";
+      const pair = (bid, ask) => price(bid) + " / " + price(ask);
       const gate = candidateStatus === "available" && freshTimestamp(item.as_of, 90) ? item.gate : "unknown";
-      [item.symbol || "—", item.expiry || "—", strikes, finite(item.delta) ? money(item.delta) : "—", finite(item.credit) ? "$" + money(item.credit) : "—", finite(item.max_loss_usd) ? "$" + money(item.max_loss_usd) : "—", item.as_of || "未提供", GATE_LABELS[gate] || GATE_LABELS.unknown].forEach((value) => row.append(el("td", "", String(value))));
+      [item.symbol || "—", (item.entry_date || "未提供") + " / " + (item.expiry || "—"), price(item.short_strike), pair(item.short_bid, item.short_ask), price(item.long_strike), pair(item.long_bid, item.long_ask), finite(item.delta) ? money(item.delta) : "—", price(item.credit), price(item.natural_close_debit), price(item.break_even), price(item.max_loss_usd), item.as_of || "未提供", GATE_LABELS[gate] || GATE_LABELS.unknown].forEach((value) => row.append(el("td", "", String(value))));
       body.append(row);
     }
     table.append(body);
@@ -189,6 +191,132 @@
     renderMarket();
     renderEvents();
     renderCandidates();
+    renderCharts();
+  }
+
+  function svgNode(tag, attributes, text) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [key, value] of Object.entries(attributes || {})) node.setAttribute(key, String(value));
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function validChartRows(rows) {
+    const unique = new Map();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (!row || !/^\d{4}-\d{2}-\d{2}$/.test(row.date) || !Number.isFinite(Date.parse(row.date + "T00:00:00Z")) || !finite(row.close) || row.close <= 0) continue;
+      unique.set(row.date, row);
+    }
+    return Array.from(unique.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  function renderNumericChart(symbol, allRows, charts) {
+    const host = $("chart-" + symbol.toLowerCase());
+    const anchor = new Date(allRows.at(-1).date + "T00:00:00Z");
+    const year = anchor.getUTCFullYear(), month = anchor.getUTCMonth() - (state.chartRange === "3M" ? 3 : 1);
+    const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    const cutoff = Date.UTC(year, month, Math.min(anchor.getUTCDate(), lastDay));
+    const rows = allRows.filter((row) => Date.parse(row.date + "T00:00:00Z") >= cutoff);
+    host.replaceChildren();
+    if (rows.length < 2) { host.append(empty("呢段期間數據不足", "需要至少兩個已核實收市點；唔會補造走勢。")); return; }
+    const fields = symbol === "SPX" ? [["close", "收市", "close"], ["sma20", "SMA20", "sma20"], ["sma50", "SMA50", "sma50"], ["sma200", "SMA200", "sma200"]] : [["close", "收市", "close vix-close"], ["sma20", "SMA20", "sma20"], ["sma50", "SMA50", "sma50"]];
+    const first = rows[0], last = rows.at(-1);
+    const percent = (last.close / first.close - 1) * 100;
+    const summary = el("div", "chart-number-line");
+    summary.append(el("strong", "", money(last.close)), el("span", percent >= 0 ? "chart-change positive" : "chart-change negative", (percent >= 0 ? "+" : "") + money(percent) + "%"), el("small", "", "區間 " + first.date + " → " + last.date));
+    host.append(summary);
+    const legend = el("div", "chart-legend");
+    for (const [field, label, className] of fields) {
+      const present = rows.some((row) => finite(row[field]));
+      const entry = el("span", present ? "legend-item" : "legend-item missing");
+      entry.append(el("i", "legend-line " + className), document.createTextNode(label + (present ? "" : " 未提供")));
+      legend.append(entry);
+    }
+    host.append(legend);
+    const values = rows.flatMap((row) => fields.map(([field]) => row[field]).filter(finite));
+    let lo = Math.min(...values), hi = Math.max(...values);
+    const padding = Math.max((hi - lo) * 0.12, hi * 0.002, 0.05);
+    lo -= padding; hi += padding;
+    const width = 560, height = 244, left = 58, right = 15, top = 12, bottom = 31;
+    const x = (index) => left + index / (rows.length - 1) * (width - left - right);
+    const y = (value) => top + (hi - value) / (hi - lo) * (height - top - bottom);
+    const svg = svgNode("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-labelledby": `${symbol}-plot-title ${symbol}-plot-desc`, class: "first-party-chart" });
+    svg.append(svgNode("title", { id: symbol + "-plot-title" }, symbol + " " + state.chartRange + " 每日收市及均線"));
+    svg.append(svgNode("desc", { id: symbol + "-plot-desc" }, `由 ${first.date} 至 ${last.date}，收市由 ${money(first.close)} 至 ${money(last.close)}。均線只顯示資料提供嘅值；下方可展開逐日數值。`));
+    for (let i = 0; i < 5; i++) {
+      const value = lo + (hi - lo) * i / 4, yy = y(value);
+      svg.append(svgNode("line", { x1: left, y1: yy, x2: width - right, y2: yy, class: "chart-grid-line" }), svgNode("text", { x: left - 9, y: yy + 3, "text-anchor": "end", class: "chart-axis-text" }, money(value, symbol === "SPX" ? 0 : 1)));
+    }
+    for (const index of [0, Math.floor((rows.length - 1) / 2), rows.length - 1]) svg.append(svgNode("text", { x: x(index), y: height - 8, "text-anchor": index === 0 ? "start" : index === rows.length - 1 ? "end" : "middle", class: "chart-axis-text" }, rows[index].date.slice(5)));
+    for (const [field, , className] of fields.slice().reverse()) {
+      let path = "", previousValid = false;
+      rows.forEach((row, index) => {
+        const value = row[field];
+        if (!finite(value)) { previousValid = false; return; }
+        path += (previousValid ? " L " : " M ") + x(index).toFixed(2) + " " + y(value).toFixed(2);
+        previousValid = true;
+      });
+      if (path) svg.append(svgNode("path", { d: path, class: "chart-series " + className, fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round" }));
+    }
+    host.append(svg);
+    const details = el("details", "chart-data-details"), table = el("table", "chart-data-table");
+    details.append(el("summary", "", "睇最近 10 個收市及均線數值"));
+    const header = el("tr");
+    for (const label of ["日期", ...fields.map(([, label]) => label)]) { const th = el("th", "", label); th.scope = "col"; header.append(th); }
+    const thead = el("thead"); thead.append(header); table.append(thead);
+    const tbody = el("tbody");
+    for (const row of rows.slice(-10)) {
+      const tr = el("tr"); tr.append(el("td", "", row.date));
+      for (const [field] of fields) tr.append(el("td", "", finite(row[field]) ? money(row[field]) : "—"));
+      tbody.append(tr);
+    }
+    table.append(tbody); const wrap = el("div", "table-wrap"); wrap.append(table); details.append(wrap); host.append(details);
+    host.append(el("p", "chart-inline-note", "歷史收市線 · " + (charts.source || "來源未提供") + (charts.as_of ? " · as-of " + charts.as_of : " · as-of 未提供")));
+  }
+
+  function providerFrame(kind, title, config) {
+    // Run the supported widget in an opaque-origin frame; it cannot read our paper ledger.
+    const frame = document.createElement("iframe");
+    frame.className = kind === "advanced-chart" ? "provider-frame advanced-chart-widget" : "provider-frame provider-tape";
+    frame.title = title;
+    frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
+    frame.srcdoc = '<!doctype html><html lang="zh-HK"><meta charset="utf-8"><style>html,body,.tradingview-widget-container{height:100%;margin:0}.tradingview-widget-container__widget{height:calc(100% - 20px)}.tradingview-widget-copyright{font:10px system-ui;margin-top:2px;text-align:center}.tradingview-widget-copyright a{color:#276f60}</style><div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener noreferrer" target="_blank">Track all markets on TradingView</a></div><script type="text/javascript" async src="https://s3.tradingview.com/external-embedding/embed-widget-' + kind + '.js">' + JSON.stringify(config).replace(/</g, "\u003c") + '</script></div></html>';
+    return frame;
+  }
+
+  function renderProviderChart(symbol) {
+    const host = $("chart-" + symbol.toLowerCase());
+    host.replaceChildren();
+    if (state.providerDisabled) { host.append(empty("第三方圖表已停用", "可使用下方獨立來源連結，或者重新載入第三方圖表。")); return; }
+    const frame = providerFrame("advanced-chart", symbol + " TradingView 每日走勢 — 獨立參考，可能延遲", { autosize: true, symbol: symbol === "SPX" ? "SP:SPX" : "CBOE:VIX", interval: "D", timezone: "America/New_York", theme: "light", style: "1", locale: "zh_TW", allow_symbol_change: false, hide_top_toolbar: false, hide_side_toolbar: true, withdateranges: true, range: state.chartRange, calendar: false, studies: ["MASimple@tv-basicstudies"], support_host: "https://www.tradingview.com" });
+    host.append(frame, el("p", "chart-inline-note", "TradingView 獨立參考圖 · 可能延遲。如未能載入，可用下方獨立來源連結。"), el("p", "chart-ma-note", "第三方圖採用可調整嘅 MA；指定 SMA 長度由已授權數值圖顯示。"));
+  }
+
+  function renderCharts() {
+    const charts = state.data?.charts;
+    const key = JSON.stringify([charts || null, state.chartRange, state.providerDisabled]);
+    if (state.chartsKey === key) return;
+    state.chartsKey = key;
+    let fallbacks = 0;
+    for (const symbol of ["SPX", "VIX"]) {
+      const rows = validChartRows(charts?.series?.[symbol]);
+      const numeric = ["available", "stale"].includes(charts?.status) && rows.length >= 2;
+      const badge = $("chart-" + symbol.toLowerCase() + "-badge");
+      if (numeric) {
+        badge.textContent = charts.status === "stale" ? "歷史資料 · 已過期" : "每日收市 · 數值圖";
+        badge.className = "pill " + (charts.status === "stale" ? "warning-pill" : "good-pill");
+        renderNumericChart(symbol, rows, charts);
+      } else {
+        fallbacks++;
+        badge.textContent = state.providerDisabled ? "第三方已停用" : "TradingView · 可延遲";
+        badge.className = "pill neutral-pill";
+        renderProviderChart(symbol);
+      }
+    }
+    $("chart-provider-toggle").hidden = fallbacks === 0;
+    $("chart-provider-toggle").textContent = state.providerDisabled ? "重新載入第三方圖表" : "停用第三方圖表";
+    $("charts-source-note").textContent = fallbacks ? "未有完整數值來源嘅圖表，改用 TradingView 獨立顯示；數據可能延遲。本頁唔抽取圖內數值，亦唔用佢觸發任何條件。" : "來源：" + (charts.source || "未提供") + " · " + (charts.as_of || "as-of 未提供") + "。SMA 使用已提供數值；缺值保留空白，唔補造。";
+    document.querySelectorAll("[data-chart-range]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.chartRange === state.chartRange)));
   }
 
   // Peter J. Acklam's rational inverse-normal approximation; model use only.
@@ -256,35 +384,20 @@
   $("calculator-form").addEventListener("submit", calculate);
   $("gate-symbol").addEventListener("change", renderGates);
   $("calc-symbol").addEventListener("change", () => { $("calc-grid").value = $("calc-symbol").value === "XSP" ? "1" : "0.5"; });
+  document.querySelectorAll("[data-chart-range]").forEach((button) => button.addEventListener("click", () => { state.chartRange = button.dataset.chartRange; renderCharts(); }));
+  $("chart-provider-toggle").addEventListener("click", () => {
+    state.providerDisabled = !state.providerDisabled;
+    try { localStorage.setItem("sps-provider-charts-disabled", String(state.providerDisabled)); } catch { /* Storage can be blocked. */ }
+    renderCharts();
+  });
   $("tv-load").addEventListener("click", () => {
     const button = $("tv-load");
     if (button.disabled) return;
     button.disabled = true;
     button.textContent = "TradingView 已要求載入";
     $("tv-container").hidden = false;
-    $("tv-status").textContent = "正在載入第三方顯示；市場資料可能延遲，唔會讀入任何計算。";
-    const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js";
-    script.async = true;
-    script.type = "text/javascript";
-    script.textContent = JSON.stringify({ symbols: [{ proName: "SP:SPX", title: "S&P 500" }, { proName: "AMEX:SPY", title: "SPY" }, { proName: "CBOE:VIX", title: "VIX" }], showSymbolLogo: true, isTransparent: true, displayMode: "adaptive", colorTheme: "light", locale: "zh_TW" });
-    script.addEventListener("error", () => { $("tv-status").textContent = "第三方顯示未能載入，可能被網絡或瀏覽器阻擋。狀態檔同手動模型仍可使用。"; });
-    const observer = new MutationObserver(() => {
-      const iframe = $("tv-container").querySelector("iframe");
-      if (iframe) {
-        iframe.title = "TradingView 市場參考帶 — 可能延遲，唔作計算輸入";
-        $("tv-status").textContent = "TradingView 獨立顯示已建立。可能延遲；唔會讀入 gate 或模型。";
-        observer.disconnect();
-      }
-    });
-    observer.observe($("tv-container"), { childList: true, subtree: true });
-    $("tv-container").append(script);
-    window.setTimeout(() => {
-      if (!$("tv-container").querySelector("iframe")) {
-        observer.disconnect();
-        $("tv-status").textContent = "如參考帶仍未顯示，可能被網絡或瀏覽器阻擋；可使用 TradingView 官方連結。";
-      }
-    }, 12000);
+    $("tv-status").textContent = "TradingView 獨立顯示；市場資料可能延遲，唔會讀入任何計算。";
+    $("tv-container").append(providerFrame("ticker-tape", "TradingView 市場參考帶 — 可能延遲", { symbols: [{ proName: "SP:SPX", title: "S&P 500" }, { proName: "AMEX:SPY", title: "SPY" }, { proName: "CBOE:VIX", title: "VIX" }], showSymbolLogo: true, isTransparent: true, displayMode: "adaptive", colorTheme: "light", locale: "zh_TW" }));
   });
   if ("IntersectionObserver" in window) {
     const links = Array.from(document.querySelectorAll(".nav-link"));

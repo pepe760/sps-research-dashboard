@@ -1,6 +1,6 @@
 """Build the public, allowlisted dashboard snapshot. No brokerage access."""
 from datetime import date, datetime, timedelta, timezone
-from math import isfinite
+from math import fsum, isfinite
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, HTTPRedirectHandler, build_opener, urlopen
@@ -15,6 +15,7 @@ from events import fetch_events
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parents[1]
 SYMBOLS = ("SPY", "XSP", "SPX", "VIX")
+CHART_SYMBOLS = ("SPX", "VIX")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -69,6 +70,59 @@ def instrument(item, now):
     return out
 
 
+def chart_series(item, now):
+    """Compute session-based averages before trimming the public viewing range."""
+    try:
+        stamp = timestamp(item.get("as_of"))
+    except (TypeError, ValueError):
+        return None
+    if stamp > now+timedelta(minutes=3):
+        return None
+    et=now.astimezone(ET)
+    bars = item.get("bars")
+    if not isinstance(bars,list) or not 2<=len(bars)<=420:
+        return None
+    prices={}
+    for r in bars:
+        if not isinstance(r,dict) or not number(r.get("close")):
+            return None
+        try:
+            d=date.fromisoformat(r["date"])
+        except (KeyError,TypeError,ValueError):
+            return None
+        if d>et.date() or d in prices or d.weekday()>4:
+            return None
+        # Never use an unfinished US regular-session bar as a historical close.
+        if d==et.date() and (et.strftime("%H:%M")<"16:15" or r.get("complete") is not True):
+            continue
+        prices[d]=r["close"]
+    days=sorted(prices)
+    if len(days)<2 or days[-1]>stamp.astimezone(ET).date():
+        return None
+    values=[prices[d] for d in days]
+    out=[]
+    for i,d in enumerate(days):
+        if (days[-1]-d).days>100:
+            continue
+        point={"date":d.isoformat(),"close":values[i]}
+        for n in (20,50,200):
+            point[f"sma{n}"]=round(fsum(values[i+1-n:i+1])/n,6) if i+1>=n else None
+        out.append(point)
+    return {"series":out,"as_of":iso(stamp),"last_close_date":days[-1].isoformat(),
+            "stale":(et.date()-days[-1]).days>4 or now-stamp>timedelta(days=4)}
+
+
+def chart_snapshot(feed, now, approved, source):
+    raw=object_or_empty(object_or_empty(feed).get("history"))
+    rows={s:v for s in CHART_SYMBOLS if approved and (v:=chart_series(object_or_empty(raw.get(s)),now))}
+    current=bool(rows) and all(not v["stale"] for v in rows.values())
+    return {"status":"available" if current else "stale" if rows else "unavailable" if approved else "unconfigured",
+            "source":str(source)[:80] if source and rows else None,
+            "as_of":min((v["as_of"] for v in rows.values()),default=None),
+            "series":{s:v["series"] for s,v in rows.items()},
+            "last_close_dates":{s:v["last_close_date"] for s,v in rows.items()}}
+
+
 def entry_gate(inst, events, entry, expiry):
     if not inst or not inst["prior_close"] or not inst["sma200"]:
         return "unknown"
@@ -113,9 +167,49 @@ def candidate(symbol, i, market, events, now):
     if not 0<credit<width:
         return None
     gate=entry_gate(market.get("SPX" if symbol=="XSP" else "SPY"),events,d.isoformat(),e.isoformat())
-    return {"symbol":symbol,"expiry":e.isoformat(),"short_strike":short,"long_strike":long,
-            "delta":delta,"credit":round(credit,4),"max_loss_usd":round(100*(width-credit)+2.8,2),
-            "as_of":iso(quoted),"gate":gate}
+    ref=market.get(symbol,{}).get("spot")
+    return {"symbol":symbol,"entry_date":d.isoformat(),"expiry":e.isoformat(),"short_strike":short,"long_strike":long,
+            "delta":delta,"short_bid":sb,"short_ask":sa,"long_bid":lb,"long_ask":la,
+            "credit":round(credit,4),"natural_close_debit":round(sa-lb,4),"max_loss_usd":round(100*(width-credit)+2.8,2),
+            "max_profit_usd":round(100*credit-2.8,2),"break_even":round(short-credit+.028,4),
+            "width":round(width,4),"distance_pct":round((1-short/ref)*100,3) if number(ref) else None,
+            "as_of":iso(quoted),"selection_as_of":iso(selection),"gate":gate}
+
+
+def valid_chain_puts(rows, expiry):
+    """Normalize a same-expiry put book and reject ambiguous duplicate strikes."""
+    if not isinstance(rows,list) or not 1<=len(rows)<=1500:
+        return {}
+    out={}
+    for r in rows:
+        if not isinstance(r,dict) or r.get("type")!="put" or r.get("expiry")!=expiry:
+            continue
+        k,b,a=r.get("strike"),r.get("bid"),r.get("ask")
+        if not(number(k) and number(b,zero=True) and number(a) and b<=a):
+            continue
+        if k in out:
+            return {}
+        out[k]=(b,a,r.get("delta"))
+    return out
+
+
+def select_chain(symbol,i):
+    """Freeze strikes at the selection snapshot; use later quotes only to price them."""
+    expiry=i.get("expiry")
+    frozen=valid_chain_puts(i.get("selection_puts"),expiry)
+    quoted=valid_chain_puts(i.get("quote_puts"),expiry)
+    targets=[k for k,(b,a,x) in frozen.items() if b>0 and isinstance(x,(int,float)) and not isinstance(x,bool) and isfinite(x) and -.15<=x<=-.05]
+    if not targets:
+        return {}
+    short=min(targets,key=lambda k:(round(abs(frozen[k][2]+.10),10),-frozen[k][0],k))
+    longs=[k for k in frozen if (short-k==15 if symbol=="XSP" else 13<=short-k<=17)]
+    if not longs:
+        return {}
+    long=min(longs,key=lambda k:(abs(short-k-15),k))
+    if short not in quoted or long not in quoted:
+        return {}
+    return {**i,"short_strike":short,"long_strike":long,"delta":frozen[short][2],
+            "short_bid":quoted[short][0],"short_ask":quoted[short][1],"long_bid":quoted[long][0],"long_ask":quoted[long][1]}
 
 
 def environment_feed():
@@ -197,26 +291,29 @@ def sanitized_events(x):
     return out
 
 
-def snapshot(now, events, feed=None, *, configured=False, previous=None, source=None):
+def snapshot(now, events, feed=None, *, configured=False, previous=None, source=None, history_approved=False):
     ev=sanitized_events(events)
     old=sanitized_events(object_or_empty(previous).get("events"))
     if ev["status"]!="available" and not ev.get("covered_through") and old["status"] in ("available","partial","stale") and old["items"]:
         ev={"status":"stale","checked_at":ev.get("checked_at"),"data_as_of":old.get("data_as_of") or old.get("checked_at"),"items":old["items"]}
     market,candidates={},[]
-    if feed is not None:
+    if configured and feed is not None:
         items=object_or_empty(feed.get("instruments"))
         for s in SYMBOLS:
             if x:=instrument(object_or_empty(items.get(s)),now):
                 market[s]=x
         each=object_or_empty(feed.get("entries"))
+        chains=object_or_empty(feed.get("chains"))
         for s in ("SPY","XSP"):
-            if c:=candidate(s,object_or_empty(each.get(s)),market,ev,now):
+            proposal=select_chain(s,object_or_empty(chains[s])) if s in chains else object_or_empty(each.get(s))
+            if c:=candidate(s,proposal,market,ev,now):
                 candidates.append(c)
     m_status="available" if market else "stale" if configured else "unconfigured"
     c_status="available" if candidates else "unavailable" if configured else "unconfigured"
     return {"schema_version":1,"checked_at":iso(now),
             "market":{"status":m_status,"as_of":max((r["as_of"] for r in market.values()),default=None),
                       "source":str(source)[:80] if market and source else None,"instruments":market},
+            "charts":chart_snapshot(feed,now,configured and history_approved,source),
             "events":ev,"candidates":{"status":c_status,"as_of":max((r["as_of"] for r in candidates),default=None),"items":candidates}}
 
 
@@ -237,7 +334,8 @@ def main():
         print("Numerical feed unavailable; publishing without live candidates.")
         data=None
     previous=prior() if events.get("status")!="available" else None
-    public=snapshot(now,events,data,configured=configured,previous=previous,source=os.getenv("SPS_PUBLIC_FEED_LABEL"))
+    public=snapshot(now,events,data,configured=configured,previous=previous,source=os.getenv("SPS_PUBLIC_FEED_LABEL"),
+                    history_approved=os.getenv("SPS_PUBLIC_HISTORY_APPROVED","").strip().lower()=="true")
     v.output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=v.output.parent,delete=False) as f:
         json.dump(public,f,ensure_ascii=False,indent=2,allow_nan=False)
